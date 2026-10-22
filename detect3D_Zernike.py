@@ -81,9 +81,7 @@ def detect3D_Zernike (nZ : int,
 
         x = Lx3d[P_graph]
         y = Ly3d[P_graph]
-        z = Lz3d[P_graph]
-        for i in range(len(z)):
-            z[i] = 20 - z[i]
+        z = Lz3d[P_graph] - Lz3d[0]     # hauteur gagnée depuis le début (nouveau tableau, les données restent intactes)
 
         fig=plt.figure(figsize=(16,9))
         ax=plt.axes(projection='3d')
@@ -98,7 +96,6 @@ def detect3D_Zernike (nZ : int,
         #ax.set_zlim((20,75))
         #ax.set_xlim((20,100))
         #ax.set_ylim((20,100))
-        ax.set_zlim(-50,-65)
 
         #ax.set_zlim(min(Lz3d[0]), max(Lz3d[0]-Lz3d[P_graph]))
         my_cmap = plt.get_cmap('viridis')

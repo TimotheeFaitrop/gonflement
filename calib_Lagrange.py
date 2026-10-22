@@ -161,9 +161,9 @@ def load_coordinates(saving_folder, filename="3D_coordinates_Lagrange.npy"):
 
 if __name__ == "__main__":
 
-    date = "2026_04_13" #time.strftime("%Y_%m_%d") #"2025_12_09"
+    date = "2026_04_14" #time.strftime("%Y_%m_%d") #"2025_12_09"
     l_pform = 4   #polynomial degree
-    image_path = f"{date}/Mvt_Rigide_venv/Mesure"
+    image_path = f"{date}/gonflement/mesure/calib"
     move_metadata(image_path) 
     # Define the inputs
 

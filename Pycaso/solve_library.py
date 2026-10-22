@@ -20,7 +20,7 @@ from numpy.polynomial.polynomial import polyval3d as p3d
 
 	
 import time
-core_number = os.cpu_count()
+core_number = min(4, os.cpu_count())
 
   
 class Lagrange_Polynome(dict) :

@@ -47,7 +47,7 @@ def calibrate(im : str ,
     """
     mrk = sqr / 2
 
-    if cv2.__version__=='4.13.0' or  cv2.__version__=='4.11.0':
+    if not hasattr(cv2.aruco, "Dictionary_get"):
         dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_250)
 
         if hasattr(cv2.aruco, "DetectorParameters"):
@@ -244,7 +244,7 @@ def complete_missing_points (corners_list : np.ndarray,
         LAB = lineB - lineA
         dP = math.sqrt(xAB**2 + yAB**2)
         l = dP / math.sqrt(CAB**2 + LAB**2)
-        if cv2.__version__[:3] == '4.6' or cv2.__version__[:3] == '4.7' or '.'.join(cv2.__version__.split('.')[:2]) == "4.11" or '.'.join(cv2.__version__.split('.')[:2]) == "4.13":
+        if tuple(int(v) for v in cv2.__version__.split('.')[:2]) >= (4, 6):
             Lx = (yAB-LAB*xAB/CAB)/(-CAB-LAB**2/CAB)
             Cy = -Lx
             Cx = (xAB -LAB*Lx)/CAB

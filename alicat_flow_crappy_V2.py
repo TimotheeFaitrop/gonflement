@@ -94,6 +94,8 @@ if pymodbus.__version__=='3.0.2': ##version à modifier
                                       method=self.method,
                                       timeout=self.timeout)
       self.client.connect()
+      # Coupe le débit dès la connexion (évite un débit résiduel pendant la config des caméras)
+      self.set_cmd(0.0)
       if self.press == 'relative':
         response = self.client.read_holding_registers(address=self.address_list['Pressure'][0], count=self.address_list['Pressure'][1], unit=1)
         decoder = BinaryPayloadDecoder.fromRegisters(response.registers, byteorder=Endian.Big, wordorder=Endian.Big)
@@ -183,6 +185,8 @@ if pymodbus.__version__=='3.8.6':
           # Connect to the device
           if not self.client.connect():
               raise Exception(f"Unable to connect to the Modbus device at {self.port}")
+          # Coupe le débit dès la connexion (évite un débit résiduel pendant la config des caméras)
+          self.set_cmd(0.0)
 
           if self.press == 'relative':
               response = self.client.read_holding_registers(address=self.address_list['Pressure'][0],
@@ -270,6 +274,8 @@ if pymodbus.__version__=='3.9.0':
 
         if not self.client.connect():
             raise Exception(f"Unable to connect to the Modbus device at {self.port}")
+        # Coupe le débit dès la connexion (évite un débit résiduel pendant la config des caméras)
+        self.set_cmd(0.0)
 
         if self.press == 'relative':
             response = self.client.read_holding_registers(
@@ -411,37 +417,55 @@ class PressureController(crappy.blocks.Block):
             cmd = 0
 
         self.prev_cmd = cmd
-        self.send({'cmd': cmd})
+        self.send({'t(s)': time.time() - self.t0,
+                   'cmd': cmd,
+                   'consigne(mL/min)': cmd * 1000})
 
 
 #contrôle débit
 class FlowController(crappy.blocks.Block):
+    """Consigne de débit appliquée en rampe (au lieu d'un échelon 0 -> consigne),
+    avec coupure si la pression dépasse pression_max."""
 
-    def __init__(self, setpoint, pression_max):
+    def __init__(self, setpoint, pression_max, ramp_time=20.0, start_delay=0.0):
         super().__init__()
-        self.setpoint = setpoint
+        self.setpoint = setpoint          # consigne finale (fraction de la pleine échelle)
         self.pression_max = pression_max
-
-        self.integral = 0
-        self.prev_error = 0
-        self.prev_cmd = 0
-        self.last_time = time.time()
-
+        self.ramp_time = ramp_time        # durée (s) pour passer de 0 à la consigne
+        self.start_delay = start_delay    # attente (s) à débit nul avant la rampe
+        self.t_start = None
+        self.safety_tripped = False
 
     def loop(self):
-        # Récupère le débit depuis flow_ali
         data = self.inputs[0].recv()
-        if not data or 'volumetric_flow' not in data or 'press' not in data:
+        if not data or 'press' not in data:
             return
 
-        v_flow = data['volumetric_flow']
         press = data['press']
+        now = time.time()
+        if self.t_start is None:
+            self.t_start = now
 
-        if press > self.pression_max:
-            cmd = 0
+        t = now - self.t_start - self.start_delay
+        if t <= 0:
+            cmd = 0.0
+        elif self.ramp_time <= 0 or t >= self.ramp_time:
+            cmd = self.setpoint
+        else:
+            cmd = self.setpoint * t / self.ramp_time
 
+        # sécurité : une fois la pression max atteinte, on coupe définitivement
+        if press is not None and press > self.pression_max:
+            self.safety_tripped = True
+        if self.safety_tripped:
+            cmd = 0.0
 
-        self.send({'cmd': self.setpoint})
+        self.send({'cmd': cmd})
+
+    def debit_en_mL_min(data):
+        if data.get('mass_flow') is not None:
+            data['debit(mL/min)'] = data['mass_flow'] * 1000
+        return data
 
 if __name__ == "__main__":
 
@@ -454,6 +478,8 @@ if __name__ == "__main__":
     ramp_rate = 1.4
 
     debit_consigne = 13.2/1000 #en fraction de 1000 mL/min
+    rampe_debit = 20   # s : durée de la montée progressive 0 -> debit_consigne
+    attente_debit = 5  # s : débit nul au démarrage (stabilisation)
     Kp_debit = 0
     Ki_debit = 0
 
@@ -567,7 +593,8 @@ if __name__ == "__main__":
 
     if control_type == "volum_flow":
 
-        controller = FlowController(setpoint=debit_consigne, pression_max=pression_max)
+        controller = FlowController(setpoint=debit_consigne, pression_max=pression_max,
+                                    ramp_time=rampe_debit, start_delay=attente_debit)
 
         crappy.link(flow_ali, controller)
         crappy.link(controller, flow_ali)
@@ -575,6 +602,8 @@ if __name__ == "__main__":
         rec_pression = crappy.blocks.Recorder(file_name=f'./{date}/{sample}/Mesure/tests_debit/data_d_{debit_consigne}.txt', labels=['t(s)','press'])
         crappy.link(flow_ali, rec_pression)
 
+    rec_cmd = crappy.blocks.Recorder(file_name=f'./{date}/{sample}/Mesure/data_cmd.txt')
+    crappy.link(controller, rec_cmd)
 
     rec_ali = crappy.blocks.Recorder(file_name=f'./{date}/{sample}/Mesure/data_ali.txt')
     crappy.link(flow_ali, rec_ali)
@@ -596,8 +625,10 @@ if __name__ == "__main__":
     graph_press = crappy.blocks.Grapher(('t(s)', 'press'))
     crappy.link(flow_ali, graph_press)
 
-    graph_debit = crappy.blocks.Grapher(('t(s)', 'volumetric_flow'))
-    crappy.link(flow_ali, graph_debit)
+    graph_debit = crappy.blocks.Grapher(('t(s)', 'debit(mL/min)'),
+                                        ('t(s)', 'consigne(mL/min)'))
+    crappy.link(flow_ali, graph_debit, modifier=debit_en_mL_min)
+    crappy.link(controller, graph_debit)
 
     graph_ver = crappy.blocks.Grapher(('tr(s)', 'exx_r'),('tr(s)', 'eyy_r'))
     crappy.link(ver, graph_ver)

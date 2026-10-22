@@ -67,13 +67,11 @@ def detect3D_Lagrange (l_pform : int,
         Ly3d.append(y)
         Lz3d.append(z)
 
-    x = Lx3d[P_graph]
-    y = Ly3d[P_graph]
-    #if P_graph != 0:
-        #z = Lz3d[P_graph]-Lz3d[0]
-    #else:
-    z = Lz3d[P_graph]
-
+    x = np.array(Lx3d[P_graph])
+    y = np.array(Ly3d[P_graph])
+    z = -(np.array(Lz3d[P_graph]) - np.array(Lz3d[0]))   # hauteur gagnée, dôme vers le haut
+    ok = np.abs(z) < 60                                   # écarte les points aberrants pour la figure
+    x, y, z = x[ok], y[ok], z[ok]
 
 
     fig = plt.figure(figsize=(16,9))
@@ -92,6 +90,8 @@ def detect3D_Lagrange (l_pform : int,
     #print(min(Lz3d[0]),max(Lz3d[-1]))
     my_cmap = plt.get_cmap('viridis')
     sctt = ax.scatter3D(x,y,z, alpha=0.8, c=z, cmap=my_cmap)
+    ax.set_box_aspect((1, 1, 0.4))
+    ax.set_aspect('equal')
     plt.title('Results')
     fig.colorbar(sctt, ax=ax, shrink=0.5, aspect=5)
     plt.savefig(saving_folder + f'Lpform_{l_pform}/'+f'Déplacement_{P_graph}-{len(Lx3d)}')
@@ -113,5 +113,5 @@ if __name__ == '__main__' :
 
     for frame in range(0,100,20): #range(4):
         print("Frame: ", frame)
-        Lx3d, Ly3d, Lz3d = detect3D_Lagrange(l_pform, date, sample, frame)
+        Lx3d, Ly3d, Lz3d = detect3D_Lagrange(l_pform, date, sample, -1)
 

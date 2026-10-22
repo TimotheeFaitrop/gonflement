@@ -4,8 +4,8 @@ from scipy.interpolate import Rbf
 from matplotlib.patches import Ellipse
 import matplotlib.pyplot as plt
 
-date = '2025_07_07'
-sample= "SC37_20_P7_30j"
+date = '25-06'
+sample= "P7_21j"
 tricot ='None'
 nZ = 10
 l_pform = 4
@@ -74,7 +74,7 @@ if tricot == 'P1':
 if tricot == 'P7R':
   ip = 0
 
-ip = 259
+ip = 16
 X3d = np.loadtxt(fname=f'./{date}/{sample}/{polform}/X3d.txt', delimiter=' ')[:ip+1]
 Y3d = np.loadtxt(fname=f'./{date}/{sample}/{polform}/Y3d.txt', delimiter=' ')[:ip+1]
 Z3d = np.loadtxt(fname=f'./{date}/{sample}/{polform}/Z3d.txt', delimiter=' ')[:ip+1]

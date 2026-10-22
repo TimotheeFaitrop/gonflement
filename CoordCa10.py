@@ -232,9 +232,9 @@ def CoordCam(path=str, mask=str, savefile=str, rotate180=False, graph_verificati
                 computation at this step.
                 New values are set to 'nan' as well
                 '''
-                barx[i] = np.float('nan')
-                bary[i] = np.float('nan')
-                boundbox[i] = (np.float('nan'), np.float('nan'), np.float('nan'),np.float('nan'))
+                barx[i] = np.nan
+                bary[i] = np.nan
+                boundbox[i] = (np.nan, np.nan, np.nan,np.nan)
             
             else :
 
@@ -257,7 +257,12 @@ def CoordCam(path=str, mask=str, savefile=str, rotate180=False, graph_verificati
                     if spots are detected in the ZOI, the bigger one is selected.
                     Barycenters and bounding box of this spot are then updated
                     '''
-                    roi_index = np.where(area==max(area))[0][0]
+                                        # tache la plus proche de la position précédente (et non la plus grosse)
+                    prev_r = barx[i] - (minr - pix)
+                    prev_c = bary[i] - (minc - pix)
+                    candidats = [k for k, a in enumerate(area) if a >= taille_min_pix / 2] or list(range(len(area)))
+                    roi_index = min(candidats, key=lambda k: (regions[k].centroid[0] - prev_r)**2
+                                                           + (regions[k].centroid[1] - prev_c)**2)
                     px,py = regions[roi_index].centroid # X,Y coordin. in local ZOI
                     ppx = minr-pix+px # compute X coordinate in global image
                     ppy = minc-pix+py # compute Y coordinate in global image
@@ -281,9 +286,9 @@ def CoordCam(path=str, mask=str, savefile=str, rotate180=False, graph_verificati
                     if no spot is detected, boundbox and barycenter coordinates
                     are set to 'nan'
                     '''
-                    boundbox[i]=(np.float('nan'),np.float('nan'), np.float('nan'),np.float( 'nan'))
-                    barx[i]=np.float('nan')
-                    bary[i]=np.float('nan')
+                    boundbox[i]=(np.nan,np.nan, np.nan,np.nan)
+                    barx[i]=np.nan
+                    bary[i]=np.nan
                 ax.axis('off')
                 ax.plot(ppy,ppx,'ro', markersize=2)
         # plt.show()
@@ -722,9 +727,9 @@ sample= "gonflement"
 mesure = "mesure" 
 saving_folder= f'./{date}/{sample}/'
 saving_folder_images = f'./{date}/{sample}/{mesure}/'
-gauche_calculated = True
-droite_calculated = True
-pix = 40  # pixel margin to the ZOI bounding box
+gauche_calculated = False
+droite_calculated = False
+pix = 20  # pixel margin to the ZOI bounding box
 taille_min_pix = 100
 taille_max_pix = 1000
 max_images_a_considerer = 82 # faire +1 pour avoir le nombre exact voulu

@@ -5,11 +5,11 @@ from glob import glob
 from math import *
 from scipy.optimize import least_squares
 
-date = '2025_07_07'
-sample= "SC37_20_P7_30j"
+date = '2026_04_13'
+sample= "gonflement"
 tricot='None'
 nZ = 10
-l_pform = 5
+l_pform = 4
 spform=555
 
 method_dict = {'Zernike','Lagrange','Soloff'}
@@ -240,7 +240,8 @@ for i in range(len(C)):
 
 
 ##PLOTS
-P = 133
+P = len(X3d) - 1   # dernier instant de l'essai ; ou un numéro entre 0 et len(X3d)-1
+print(f"{len(X3d)} instants dans X3d, tracé de l'instant {P}")
 #plot 3D
 x = X3d[P]
 y = Y3d[P]
