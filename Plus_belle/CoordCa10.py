@@ -723,16 +723,16 @@ def register_and_match(L, R,
 
 ##Identification des points
 date = "2026_10_23" # time.strftime("%Y_%m_%d")  # "2025_07_21"
-sample= "gonflement" 
-mesure = "mesure" 
-saving_folder= f'./{date}/{sample}/'
-saving_folder_images = f'./{date}/{sample}/{mesure}/'
+sample= "essai1" 
+mesure = "" 
+saving_folder= f'../../../Expériences/{date}/{sample}/'
+saving_folder_images = f'../../../Expériences//{date}/{sample}/'
 gauche_calculated = False
 droite_calculated = False
 pix = 20  # pixel margin to the ZOI bounding box
 taille_min_pix = 50
 taille_max_pix = 1000
-max_images_a_considerer = 82 # faire +1 pour avoir le nombre exact voulu
+max_images_a_considerer = 10 # faire +1 pour avoir le nombre exact voulu
 w_spots = False
 
 
