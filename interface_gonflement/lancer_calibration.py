@@ -128,7 +128,9 @@ def acquisition(cfg):
         save_folder_right=str(dossier / "video_extenso_right") + "/",
         save_folder_left=str(dossier / "video_extenso_left") + "/",
         exposure_right=int(cal["expo_droite"]), exposure_left=int(cal["expo_gauche"]),
-        trigger="Hardware", timeout=100000)
+        # délai d'une image : un plan + 5 s (100 s dans calib_crappy_V2, ce qui
+        # bloquait le programme si une caméra ne recevait pas le déclenchement)
+        trigger="Hardware", timeout=int((t_plan + 5) * 1000))
     mot = crappy.blocks.Machine([{"type": "Printer", "mode": "position",
                                   "cmd_label": "pos", "position_label": "position",
                                   "speed": 100, "port": mat["port_imprimante"]}],

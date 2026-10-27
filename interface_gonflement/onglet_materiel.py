@@ -58,6 +58,7 @@ class OngletMateriel(ttk.Frame):
         for texte, cmd in (("Détecter les ports", lambda: a.outil("Ports", "ports")),
                            ("Libérer la mémoire USB (sudo)", self.memoire_usb),
                            ("Couper le débit (Alicat → 0)", self.debit_zero),
+                           ("Libérer les caméras", lambda: a.liberer_cameras()),
                            ("Enregistrer les réglages", lambda: a.sauver_reglages(False))):
             ttk.Button(b, text=texte, command=cmd).pack(side="left", padx=3)
         ttk.Label(f, style="Petit.TLabel", wraplength=620, text=(

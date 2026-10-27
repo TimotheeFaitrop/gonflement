@@ -100,6 +100,10 @@ def main(fichier_config):
         import ft232R  # noqa: F401  enregistre Ft232r
 
         taille = int(mat["taille_image"])
+        # délai d'attente d'une image déclenchée : 3 périodes + 2 s. Sans délai, une
+        # caméra qui ne reçoit plus d'impulsion bloque son processus indéfiniment
+        # (appel xiAPI non interruptible) et l'essai ne peut plus s'arrêter.
+        attente_ms = int(max(5000, 3000 / float(ess["freq_cam"]) + 2000))
         commun = dict(camera="XiAPI", config=True,
                       save_images=bool(ess["sauver_images"]),
                       img_shape=(taille, taille), img_dtype="uint8",
@@ -109,13 +113,13 @@ def main(fichier_config):
             labels=["tr(s)", "meta_r", "pix_r", "eyy_r", "exx_r"],
             **commun, **{"serial_number": mat["sn_droite"],
                          "exposure": int(mat["expo_droite"]),
-                         "trigger": "Hdw after config"})
+                         "trigger": "Hdw after config", "timeout": attente_ms})
         vel = FixedVideoExtenso(
             save_folder=str(dossier / "video_extenso_left"),
             labels=["tl(s)", "meta_l", "pix_l", "eyy_l", "exx_l"],
             **commun, **{"serial_number": mat["sn_gauche"],
                          "exposure": int(mat["expo_gauche"]),
-                         "trigger": "Hdw after config"})
+                         "trigger": "Hdw after config", "timeout": attente_ms})
 
         periode = 1.0 / float(ess["freq_cam"])
         ftdi = crappy.blocks.IOBlock("Ft232r", cmd_labels=["cmd"], spam=False,

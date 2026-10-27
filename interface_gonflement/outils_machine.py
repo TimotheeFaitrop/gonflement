@@ -62,42 +62,81 @@ def aller_z(port, z, avec_origine=False):
     print(f"Plateau en Z = {z} mm")
 
 
-def apercu(sn_g, sn_d, expo_g, expo_d):
-    """Aperçu des deux caméras côte à côte (touche q ou Échap pour fermer)."""
-    import cv2
-    import numpy as np
+def _ouvrir_camera(sn, expo):
+    """Ouvre une caméra en acquisition libre ; renvoie (camera, image) ou lève une erreur."""
     from ximea import xiapi
-
-    cams = []
-    for sn, expo in ((sn_g, expo_g), (sn_d, expo_d)):
-        c = xiapi.Camera()
-        c.open_device_by_SN(sn)
+    c = xiapi.Camera()
+    c.open_device_by_SN(sn)
+    try:
         c.set_imgdataformat("XI_MONO8")
+        c.set_trigger_source("XI_TRG_OFF")       # au cas où un essai l'a laissée en déclenché
         c.set_exposure(int(expo))
         c.start_acquisition()
-        cams.append((c, xiapi.Image()))
+    except Exception:
+        c.close_device()
+        raise
+    return c, xiapi.Image()
+
+
+def _fermer_camera(c):
+    for f in (c.stop_acquisition, c.close_device):
+        try:
+            f()
+        except Exception:
+            pass
+
+
+def apercu(sn_g, sn_d, expo_g, expo_d):
+    """Aperçu des deux caméras côte à côte (q, Échap ou fermeture de la fenêtre).
+
+    Une caméra qui ne s'ouvre pas ou ne renvoie pas d'image n'empêche ni
+    d'afficher l'autre, ni de fermer la fenêtre : lecture avec délai d'attente."""
+    import cv2
+    import numpy as np
+
+    cams = {}
+    for nom, sn, expo in (("gauche", sn_g, expo_g), ("droite", sn_d, expo_d)):
+        try:
+            cams[nom] = _ouvrir_camera(sn, expo)
+            print(f"Caméra {nom} ({sn}) ouverte", flush=True)
+        except Exception as e:
+            cams[nom] = None
+            print(f"Caméra {nom} ({sn}) INDISPONIBLE : {e}", flush=True)
+    # délai de lecture : exposition + 1 s (ms), pour ne jamais rester bloqué
+    delai = {"gauche": int(expo_g) // 1000 + 1000, "droite": int(expo_d) // 1000 + 1000}
     print("Aperçu ouvert : q ou Échap pour fermer", flush=True)
     titre = "Apercu  gauche | droite   (q pour fermer)"
+    vide = np.zeros((676, 676, 3), np.uint8)
     try:
         while True:
             vues = []
-            for c, img in cams:
-                c.get_image(img)
-                f = img.get_image_data_numpy()
-                f = cv2.resize(f, None, fx=0.33, fy=0.33, interpolation=cv2.INTER_AREA)
-                h, w = f.shape[:2]
-                f = cv2.cvtColor(f, cv2.COLOR_GRAY2BGR)
-                cv2.line(f, (w // 2, 0), (w // 2, h), (0, 200, 0), 1)
-                cv2.line(f, (0, h // 2), (w, h // 2), (0, 200, 0), 1)
-                vues.append(f)
+            for nom in ("gauche", "droite"):
+                f = None
+                if cams[nom] is not None:
+                    c, img = cams[nom]
+                    try:
+                        c.get_image(img, timeout=delai[nom])
+                        f = img.get_image_data_numpy()
+                    except Exception:
+                        f = None
+                if f is None:
+                    v = vide.copy()
+                    cv2.putText(v, f"camera {nom} : pas d'image", (40, 338),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (80, 80, 230), 2)
+                else:
+                    v = cv2.cvtColor(cv2.resize(f, (676, 676), interpolation=cv2.INTER_AREA),
+                                     cv2.COLOR_GRAY2BGR)
+                    cv2.line(v, (338, 0), (338, 676), (0, 200, 0), 1)
+                    cv2.line(v, (0, 338), (676, 338), (0, 200, 0), 1)
+                vues.append(v)
             cv2.imshow(titre, np.hstack(vues))
-            k = cv2.waitKey(1) & 0xFF
+            k = cv2.waitKey(30) & 0xFF
             if k in (ord("q"), 27) or cv2.getWindowProperty(titre, cv2.WND_PROP_VISIBLE) < 1:
                 break
     finally:
-        for c, _ in cams:
-            c.stop_acquisition()
-            c.close_device()
+        for cam in cams.values():
+            if cam is not None:
+                _fermer_camera(cam[0])
         cv2.destroyAllWindows()
 
 
@@ -115,21 +154,26 @@ def reglage_init(sn_g, sn_d, expo_g, expo_d, port):
 
 
 def test_cameras(*serials):
-    from ximea import xiapi
+    """Ouvre chaque caméra et lit une image (délai 3 s). Code de sortie 0 si toutes
+    répondent. Chaque étape est annoncée avant d'être faite : si une caméra bloque,
+    la dernière ligne affichée indique laquelle (l'interface coupe le test au bout de 20 s)."""
     ok = True
     for sn in serials:
-        c = xiapi.Camera()
+        print(f"Test caméra {sn}…", flush=True)
         try:
-            c.open_device_by_SN(sn)
-            print(f"Caméra {sn} : OK ({c.get_device_info_string('device_name')})")
+            c, img = _ouvrir_camera(sn, 10000)
         except Exception as e:
             ok = False
-            print(f"Caméra {sn} : INDISPONIBLE ({e}) -> débrancher/rebrancher")
+            print(f"Caméra {sn} : NE S'OUVRE PAS ({e})", flush=True)
+            continue
+        try:
+            c.get_image(img, timeout=3000)
+            print(f"Caméra {sn} : OK (image {img.width} x {img.height})", flush=True)
+        except Exception as e:
+            ok = False
+            print(f"Caméra {sn} : OUVERTE MAIS AUCUNE IMAGE ({e})", flush=True)
         finally:
-            try:
-                c.close_device()
-            except Exception:
-                pass
+            _fermer_camera(c)
     sys.exit(0 if ok else 1)
 
 

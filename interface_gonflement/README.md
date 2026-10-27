@@ -88,6 +88,17 @@ Mêmes paramètres et valeurs par défaut que les programmes du dépôt :
    Options metadata et nuage 3D, mire 12 × 12 carrés de 7,5 mm. Un résultat
    Zernike ou Lagrange est repris automatiquement pour le pilotage 3D.
 
+## Caméras : une seule répond
+
+Avant chaque essai ou acquisition réels, l'interface vérifie la mémoire USB,
+cherche les processus restés ouverts (essai, aperçu, xiCamTool) qui gardent une
+caméra, propose de les arrêter, puis ouvre chaque caméra et lit une image dans un
+processus séparé coupé au bout de 20 s. Si une caméra ne répond pas, elle est
+nommée et l'essai n'est pas lancé (sauf choix contraire). Toutes les lectures
+d'image ont un délai d'attente borné, l'aperçu reste fermable si une caméra ne
+répond pas, et le bouton « Libérer les caméras » (onglet Matériel) remplace le
+pkill. Si une caméra reste bloquée malgré tout : la débrancher et la rebrancher.
+
 ## Onglet Matériel
 
 Ports, numéros de série, expositions, URL du FT232R, dossier racine, ports UDP.

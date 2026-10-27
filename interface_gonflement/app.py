@@ -14,10 +14,12 @@ besoin de son propre processus principal) ; l'essai renvoie ses mesures en UDP
 """
 
 import json
+import os
 import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import tkinter as tk
 from pathlib import Path
@@ -180,6 +182,100 @@ class Application(Formulaire, tk.Tk):
             return self.log(f"[simulation] {nom} : rien n'est envoyé au matériel", "alerte")
         self.lancer(nom, [self.python(), "-u", str(self.ICI / "outils_machine.py"), action]
                     + [str(x) for x in args])
+
+    # ------------------------------------------------------------------ caméras
+    SCRIPTS = ("lancer_essai.py", "lancer_calibration.py", "outils_machine.py")
+
+    def processus_restants(self):
+        """Processus laissés par un essai, une calibration ou un aperçu précédent
+        (ils gardent les caméras ouvertes : la caméra ne répond plus ensuite).
+        Seuls sont retenus les Python qui exécutent nos scripts, et xiCamTool."""
+        actifs = {self.proc.p.pid} if self.proc is not None and self.proc.vivant() else set()
+        restes = {}
+        r = subprocess.run(["ps", "-eo", "pid=,pgid=,args="], capture_output=True, text=True)
+        for ligne in r.stdout.splitlines():
+            champs = ligne.split(None, 2)
+            if len(champs) < 3:
+                continue
+            pid, pgid, cmd = int(champs[0]), int(champs[1]), champs[2]
+            args = cmd.split()
+            exe = Path(args[0]).name
+            nos_scripts = exe.startswith("python") and any(
+                Path(x).name in self.SCRIPTS and Path(x).parent.name == "interface_gonflement"
+                for x in args[1:4])
+            if (nos_scripts or exe == "xiCamTool") and pid != os.getpid() \
+                    and pgid not in actifs:
+                restes[pid] = cmd
+        return restes
+
+    def liberer_cameras(self, restes=None):
+        """Arrête les processus restants (SIGTERM, puis SIGKILL 2 s après)."""
+        restes = self.processus_restants() if restes is None else restes
+        if not restes:
+            self.log("Aucun processus resté ouvert : les caméras sont libres", "info")
+            return
+        for pid, cmd in restes.items():
+            self.log(f"Arrêt du processus resté ouvert {pid} : {cmd[:90]}", "alerte")
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        time.sleep(2)
+        for pid in restes:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    def preparer_cameras(self, suite):
+        """Avant un essai ou une acquisition réels : mémoire USB, processus restés
+        ouverts, puis test d'ouverture et de lecture de chaque caméra (dans un
+        processus séparé, coupé au bout de 20 s si une caméra est bloquée)."""
+        if self.v("materiel.simulation").get():
+            return suite()
+        if not self.verifier_memoire_usb():
+            return
+        restes = self.processus_restants()
+        if restes:
+            if not messagebox.askyesno("Caméras occupées", (
+                    f"{len(restes)} processus d'un essai ou d'un aperçu précédent sont "
+                    "encore ouverts et peuvent bloquer une caméra :\n\n"
+                    + "\n".join(c[:80] for c in restes.values())
+                    + "\n\nLes arrêter ?")):
+                return
+            self.liberer_cameras(restes)
+        m = self.reglages["materiel"]
+        cmd = [self.python(), "-u", str(self.ICI / "outils_machine.py"), "test_cameras",
+               m["sn_gauche"], m["sn_droite"]]
+        self.log("Vérification des deux caméras…", "info")
+        self.lbl_proc.configure(text="Vérification des caméras…")
+
+        def tache():
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=20,
+                                   cwd=str(self.ICI.parent), start_new_session=True)
+                sortie, code = (r.stdout + r.stderr).strip(), r.returncode
+            except subprocess.TimeoutExpired as e:
+                sortie = ((e.stdout or b"").decode(errors="ignore") if isinstance(e.stdout, bytes)
+                          else (e.stdout or "")).strip()
+                sortie += "\nBLOQUÉ : la dernière caméra testée ne répond plus."
+                code = -1
+            self.after(0, lambda: fin(sortie, code))
+
+        def fin(sortie, code):
+            self.lbl_proc.configure(text="Aucune tâche en cours")
+            for l in sortie.splitlines():
+                self.log(l)
+            if code == 0:
+                return suite()
+            conseil = ("Une caméra ne répond pas. Le plus souvent : un programme la garde "
+                       "ouverte (xiCamTool, essai précédent : bouton « Libérer les caméras »), "
+                       "ou elle est dans un état USB bloqué : la débrancher et la rebrancher. "
+                       "Vérifier aussi les numéros de série (onglet Matériel).")
+            if messagebox.askyesno("Caméra indisponible", f"{sortie}\n\n{conseil}\n\n"
+                                   "Lancer quand même ?", icon="warning"):
+                suite()
+        threading.Thread(target=tache, daemon=True).start()
 
     def verifier_memoire_usb(self):
         """Comme les scripts d'origine (echo 0 | sudo tee …usbfs_memory_mb) : sans ça les

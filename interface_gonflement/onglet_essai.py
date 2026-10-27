@@ -287,13 +287,11 @@ class OngletEssai(ttk.Frame):
         if erreurs:
             messagebox.showerror("Paramètres à corriger", "\n".join(erreurs))
             return
-        if not cfg["materiel"]["simulation"] and not a.verifier_memoire_usb():
-            return
         if not messagebox.askokcancel("Démarrer l'essai ?", resume(cfg)):
             return
         fichier = a.ecrire_config("derniere_config_essai.json")
         if fichier is not None:
-            self._lancer(fichier, cfg)
+            a.preparer_cameras(lambda: self._lancer(fichier, cfg))
 
     def relancer(self):
         """Relance l'essai précédent avec exactement les mêmes paramètres."""
@@ -303,13 +301,11 @@ class OngletEssai(ttk.Frame):
             return
         with open(fichier, encoding="utf-8") as f:
             cfg = json.load(f)
-        if not cfg["materiel"]["simulation"] and not a.verifier_memoire_usb():
-            return
         if not messagebox.askokcancel("Relancer l'essai ?", "Mêmes paramètres que l'essai "
                                       "précédent, données dans un nouveau dossier Mesure.\n\n"
                                       + resume(cfg)):
             return
-        self._lancer(fichier, cfg)
+        a.preparer_cameras(lambda: self._lancer(fichier, cfg))
 
     def _lancer(self, fichier, cfg):
         a = self.app

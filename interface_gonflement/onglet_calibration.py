@@ -58,7 +58,7 @@ class OngletCalibration(ttk.Frame):
                      "vérifier la netteté.", 620)
         b = ttk.Frame(f)
         b.grid(row=2, column=0, columnspan=4, sticky="w", padx=4, pady=4)
-        ttk.Button(b, text="Changer Origine Z", command=lambda: a.outil(
+        ttk.Button(b, text="Origine Z (G28)", command=lambda: a.outil(
             "Origine Z", "origine", port())).pack(side="left", padx=3)
         ttk.Button(b, text="Aperçu seul", command=lambda: self._apercu("apercu")
                    ).pack(side="left", padx=3)
@@ -194,8 +194,6 @@ class OngletCalibration(ttk.Frame):
             z = rg.zl(c)
         except ValueError as e:
             return messagebox.showerror("Plans z", str(e))
-        if not a.verifier_memoire_usb():
-            return
         if not messagebox.askokcancel("Acquisition", (
                 f"{len(z)} plans de Z = {z[0]} à {z[-1]} mm (pas {c['pas_z']:g} mm), images dans\n"
                 f"{a.chemin(self._chemin_auto())}\n\n"
@@ -211,9 +209,9 @@ class OngletCalibration(ttk.Frame):
             n = [len(list((d / f"video_extenso_{c}").glob("*.tif*"))) for c in ("left", "right")]
             a.log(f"Images enregistrées : gauche {n[0]}, droite {n[1]} dans {d}",
                   "info" if min(n) > 0 else "erreur")
-        a.lancer("Acquisition calibration", [a.python(), "-u", str(a.ICI / "lancer_calibration.py"),
-                                             "acquisition", str(fichier)], sur_ligne=sur_ligne,
-                 sur_fin=fin)
+        a.preparer_cameras(lambda: a.lancer(
+            "Acquisition calibration", [a.python(), "-u", str(a.ICI / "lancer_calibration.py"),
+                                        "acquisition", str(fichier)], sur_ligne=sur_ligne, sur_fin=fin))
 
     def document(self):
         a = self.app
