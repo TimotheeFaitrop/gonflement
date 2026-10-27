@@ -16,6 +16,7 @@ import sys
 import time
 from pathlib import Path
 
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -42,7 +43,10 @@ class Detect3D:
     SOUS_DOSSIER_ENTREE = "appariemment_et_suivi"   # contient Lp_final.npy
     SOUS_DOSSIER_SORTIE = "reconstruction"          # reçoit les résultats 3D
     SOUS_DOSSIER_MESURE = ""                  # images (Zernike seulement)
-    SOLOFF_METHODE = "curve_fit"           # méthode de résolution de Soloff_identification
+    # dossier où l'explorateur « … » de l'interface commence la recherche (absolu ou relatif au
+    # dossier d'exécution ; "~" accepté). S'il n'existe pas, on remonte au premier parent existant.
+    DOSSIER_PARCOURIR = "../../Expériences"
+    SOLOFF_METHODE = "curve_fit"          # méthode de résolution de Soloff_identification
 
     def __init__(self,
                  # --- Essai à traiter ---
@@ -51,12 +55,19 @@ class Detect3D:
                  # --- Étalonnage ---
                  methode="Lagrange",        # "Lagrange", "Soloff" ou "Zernike"
                  degre=None,                # degré du polynôme ; None = valeur par défaut de la méthode
+                 facteur_z=10.0,            # Z reconstruit × facteur (Z sorti 10× trop petit) ; 1 = brut
                  # --- Figures ---
                  images_a_tracer=(-1,),     # indices des images tracées (-1 = dernière)
                  deplacement=True,          # tracer z - z(image 0) plutôt que z
                  inverser_z=True,           # changer le signe de Z (dôme vers le haut)
                  seuil_aberrants=60.0,      # déplacement max (mm) affiché ; 0 = pas de filtre
-                 afficher_figures=True):    # ouvrir les figures (sinon seulement enregistrées)
+                 couleurs_fixes=False,      # échelle de couleur fixe (sinon : min/max des données)
+                 z_min=-10.0,               # bas de l'échelle fixe (mm), violet foncé
+                 z_bleu=0.0,                # Z (mm) affiché en bleu
+                 z_jaune=60.0,              # Z (mm) affiché en jaune
+                 z_max=100.0,               # haut de l'échelle fixe (mm), jaune vif
+                 enregistrer_figures=True,  # enregistrer les figures en .png dans dossier_sortie
+                 afficher_figures=True):    # ouvrir les figures à l'écran
         if methode not in self.METHODES:
             raise ValueError(f"Méthode inconnue : {methode} (choix : {', '.join(self.METHODES)})")
         self.date = date or time.strftime("%Y_%m_%d")
@@ -67,6 +78,13 @@ class Detect3D:
         self.deplacement = deplacement
         self.inverser_z = inverser_z
         self.seuil_aberrants = seuil_aberrants
+        self.facteur_z = facteur_z
+        self.couleurs_fixes = couleurs_fixes
+        self.z_min = z_min
+        self.z_bleu = z_bleu
+        self.z_jaune = z_jaune
+        self.z_max = z_max
+        self.enregistrer_figures = enregistrer_figures
         self.afficher_figures = afficher_figures
 
     RESULTATS = ("X", "Y", "Z")
@@ -168,10 +186,12 @@ class Detect3D:
             X.append(x); Y.append(y); Z.append(z)
         print()
         self.X, self.Y, self.Z = (np.array(v, dtype=float) for v in (X, Y, Z))
+        self.Z *= self.facteur_z               # correction d'échelle de Z (aussi dans Z3d.txt)
 
         self.enregistrer()
-        for n in self.images_a_tracer:
-            self.tracer(n)
+        if self.enregistrer_figures or self.afficher_figures:
+            for n in self.images_a_tracer:
+                self.tracer(n)
         return self.X, self.Y, self.Z
 
     # ----- étalonnage -----
@@ -221,6 +241,26 @@ class Detect3D:
         print(f"X3d.txt, Y3d.txt, Z3d.txt enregistrés dans {self.dossier_sortie} "
               f"({self.X.shape[0]} images, {self.X.shape[1]} points)")
 
+    # places de z_bleu et z_jaune dans viridis (0 = violet foncé, 0.25 = bleu, 0.9 = jaune, 1 = jaune vif)
+    POSITION_BLEU = 0.25
+    POSITION_JAUNE = 0.9
+
+    def norme_couleurs(self):
+        """Normalisation de la colormap : None (automatique) ou échelle fixe par morceaux.
+
+        L'échelle va de z_min à z_max ; z_bleu tombe à POSITION_BLEU (bleu) et z_jaune à
+        POSITION_JAUNE (jaune), linéairement entre ces points. Hors [z_min, z_max] : couleur du bout.
+        """
+        if not self.couleurs_fixes:
+            return None
+        zs = [self.z_min, self.z_bleu, self.z_jaune, self.z_max]
+        if not all(a < b for a, b in zip(zs, zs[1:])):
+            raise ValueError(f"Échelle de couleur : il faut z_min < z_bleu < z_jaune < z_max ({zs})")
+        ps = [0.0, self.POSITION_BLEU, self.POSITION_JAUNE, 1.0]
+        return mcolors.FuncNorm((lambda z: np.interp(z, zs, ps, left=-0.01, right=1.01),
+                                 lambda p: np.interp(p, ps, zs)),
+                                vmin=self.z_min, vmax=self.z_max)
+
     def tracer(self, n):
         """Nuage 3D de l'image n (-1 = dernière)."""
         nb = len(self.X)
@@ -239,8 +279,9 @@ class Detect3D:
         ax = plt.axes(projection="3d")
         ax.grid(visible=True, color="grey", linestyle="-.", linewidth=0.3, alpha=0.2)
         ax.set_xlabel("X"); ax.set_ylabel("Y"); ax.set_zlabel("Z")
-        ax.set_xlim(-10,90);ax.set_ylim(-10,90);ax.set_zlim(-5,20)
-        sctt = ax.scatter3D(x, y, z, alpha=0.8, c=z, cmap=plt.get_cmap("viridis"))
+        ax.set_xlim(-10,90);ax.set_ylim(-10,90);ax.set_zlim(-10,90)
+        sctt = ax.scatter3D(x, y, z, alpha=0.8, c=z, cmap=plt.get_cmap("viridis"),
+                            norm=self.norme_couleurs())
         ax.set_box_aspect((1, 1, 0.4))
         try:
             ax.set_aspect("equal")
@@ -249,8 +290,13 @@ class Detect3D:
         quoi = "déplacement Z" if self.deplacement else "Z"
         plt.title(f"{self.methode} {self.tag} - image {num} / {nb - 1} - {quoi} (mm), "
                   f"{ok.sum()} points")
-        fig.colorbar(sctt, ax=ax, shrink=0.5, aspect=5)
-        plt.savefig(self.dossier_sortie / f"Déplacement_{num}-{nb}.png")
+        cbar = fig.colorbar(sctt, ax=ax, shrink=0.5, aspect=5,
+                            extend="both" if self.couleurs_fixes else "neither")
+        if self.couleurs_fixes:            # échelle par morceaux : graduer seulement les 4 valeurs
+            cbar.set_ticks([self.z_min, self.z_bleu, self.z_jaune, self.z_max])
+            cbar.set_ticklabels([f"{v:g}" for v in (self.z_min, self.z_bleu, self.z_jaune, self.z_max)])
+        if self.enregistrer_figures:
+            plt.savefig(self.dossier_sortie / f"Déplacement_{num}-{nb}.png")
         if self.afficher_figures:
             plt.show()
         plt.close(fig)
