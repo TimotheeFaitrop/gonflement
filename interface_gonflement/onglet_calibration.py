@@ -58,7 +58,7 @@ class OngletCalibration(ttk.Frame):
                      "vérifier la netteté.", 620)
         b = ttk.Frame(f)
         b.grid(row=2, column=0, columnspan=4, sticky="w", padx=4, pady=4)
-        ttk.Button(b, text="Origine Z (G28)", command=lambda: a.outil(
+        ttk.Button(b, text="Changer Origine Z", command=lambda: a.outil(
             "Origine Z", "origine", port())).pack(side="left", padx=3)
         ttk.Button(b, text="Aperçu seul", command=lambda: self._apercu("apercu")
                    ).pack(side="left", padx=3)
