@@ -1,0 +1,159 @@
+"""Petites actions sur le matériel, lancées en sous-processus par l'interface
+(pour ne jamais bloquer la fenêtre ni garder un port série ouvert).
+
+    python outils_machine.py ports
+    python outils_machine.py origine   PORT_IMPRIMANTE
+    python outils_machine.py aller_z   PORT_IMPRIMANTE Z [--origine]
+    python outils_machine.py apercu    SN_GAUCHE SN_DROITE EXPO_G EXPO_D
+    python outils_machine.py test_cameras SN_GAUCHE SN_DROITE
+    python outils_machine.py debit_zero PORT_ALICAT BAUD
+"""
+
+import struct
+import sys
+import time
+
+
+def _envoyer_gcode(dev, cmd, timeout=120):
+    """Envoie une ligne G-code et attend le 'ok' (comme reglage_hauteur_init)."""
+    dev.write((cmd + "\r\n").encode())
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        ligne = dev.readline().decode(errors="ignore").strip()
+        if ligne:
+            print(">>", ligne, flush=True)
+        if ligne.lower().startswith("ok"):
+            return
+    raise TimeoutError(f"Pas de réponse 'ok' pour {cmd}")
+
+
+def ports():
+    from serial.tools import list_ports
+    lp = list(list_ports.comports())
+    if not lp:
+        print("Aucun port série détecté")
+    for p in lp:
+        print(f"{p.device:16s} {p.description}  [{p.hwid}]")
+    try:
+        from pyftdi.ftdi import Ftdi
+        Ftdi.show_devices()
+    except Exception as e:  # pyftdi absent ou pas de droits USB
+        print(f"(FTDI non listé : {e})")
+
+
+def origine(port):
+    from serial import Serial
+    with Serial(port, baudrate=115200, timeout=2) as dev:
+        time.sleep(2)  # l'imprimante redémarre à l'ouverture du port
+        _envoyer_gcode(dev, "G28 Z0")
+    print("Origine Z faite")
+
+
+def aller_z(port, z, avec_origine=False):
+    from serial import Serial
+    with Serial(port, baudrate=115200, timeout=2) as dev:
+        time.sleep(2)
+        if avec_origine:
+            _envoyer_gcode(dev, "G28 Z0")
+        _envoyer_gcode(dev, "G90")
+        _envoyer_gcode(dev, f"G0 X0 Y0 Z{z}")
+        _envoyer_gcode(dev, "M400")      # attend la fin du déplacement
+    print(f"Plateau en Z = {z} mm")
+
+
+def apercu(sn_g, sn_d, expo_g, expo_d):
+    """Aperçu des deux caméras côte à côte (touche q ou Échap pour fermer)."""
+    import cv2
+    import numpy as np
+    from ximea import xiapi
+
+    cams = []
+    for sn, expo in ((sn_g, expo_g), (sn_d, expo_d)):
+        c = xiapi.Camera()
+        c.open_device_by_SN(sn)
+        c.set_imgdataformat("XI_MONO8")
+        c.set_exposure(int(expo))
+        c.start_acquisition()
+        cams.append((c, xiapi.Image()))
+    print("Aperçu ouvert : q ou Échap pour fermer", flush=True)
+    titre = "Apercu  gauche | droite   (q pour fermer)"
+    try:
+        while True:
+            vues = []
+            for c, img in cams:
+                c.get_image(img)
+                f = img.get_image_data_numpy()
+                f = cv2.resize(f, None, fx=0.33, fy=0.33, interpolation=cv2.INTER_AREA)
+                h, w = f.shape[:2]
+                f = cv2.cvtColor(f, cv2.COLOR_GRAY2BGR)
+                cv2.line(f, (w // 2, 0), (w // 2, h), (0, 200, 0), 1)
+                cv2.line(f, (0, h // 2), (w, h // 2), (0, 200, 0), 1)
+                vues.append(f)
+            cv2.imshow(titre, np.hstack(vues))
+            k = cv2.waitKey(1) & 0xFF
+            if k in (ord("q"), 27) or cv2.getWindowProperty(titre, cv2.WND_PROP_VISIBLE) < 1:
+                break
+    finally:
+        for c, _ in cams:
+            c.stop_acquisition()
+            c.close_device()
+        cv2.destroyAllWindows()
+
+
+def test_cameras(*serials):
+    from ximea import xiapi
+    ok = True
+    for sn in serials:
+        c = xiapi.Camera()
+        try:
+            c.open_device_by_SN(sn)
+            print(f"Caméra {sn} : OK ({c.get_device_info_string('device_name')})")
+        except Exception as e:
+            ok = False
+            print(f"Caméra {sn} : INDISPONIBLE ({e}) -> débrancher/rebrancher")
+        finally:
+            try:
+                c.close_device()
+            except Exception:
+                pass
+    sys.exit(0 if ok else 1)
+
+
+def debit_zero(port, baud):
+    """Écrit une consigne nulle dans le registre 1009 de l'Alicat (secours)."""
+    from pymodbus.client import ModbusSerialClient
+    import pymodbus
+    ancien = pymodbus.__version__.startswith("3.0")
+    kw = {"method": "rtu"} if ancien else {}
+    cli = ModbusSerialClient(port=port, baudrate=int(baud), parity="N",
+                             stopbits=1, timeout=3, **kw)
+    if not cli.connect():
+        sys.exit(f"Impossible d'ouvrir {port}")
+    octets = struct.pack(">f", 0.0)
+    regs = [struct.unpack(">H", octets[i:i + 2])[0] for i in (0, 2)]
+    if ancien:   # même appel que alicat_flow_crappy_V3 pour pymodbus 3.0.2
+        cli.write_registers(address=1009, values=regs, unit=1)
+    else:
+        cli.write_registers(address=1009, values=regs)
+    cli.close()
+    print("Consigne de débit remise à 0")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        sys.exit(__doc__)
+    action, args = sys.argv[1], sys.argv[2:]
+    if action == "ports":
+        ports()
+    elif action == "origine":
+        origine(args[0])
+    elif action == "aller_z":
+        aller_z(args[0], float(args[1]), "--origine" in args)
+    elif action == "apercu":
+        apercu(*args[:4])
+    elif action == "test_cameras":
+        test_cameras(*args)
+    elif action == "debit_zero":
+        debit_zero(args[0], args[1])
+    else:
+        sys.exit(f"Action inconnue : {action}\n{__doc__}")
