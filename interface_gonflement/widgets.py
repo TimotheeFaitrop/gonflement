@@ -3,8 +3,10 @@ info-bulle et formulaire lié aux réglages (reglages.DEFAUTS)."""
 
 import os
 import queue
+import signal
 import subprocess
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -23,6 +25,7 @@ class Processus:
     def __init__(self, nom, cmd, sur_ligne, sur_fin):
         self.nom, self.sur_ligne, self.sur_fin = nom, sur_ligne, sur_fin
         self.q = queue.Queue()
+        self.t_mort, self.fini = None, False
         self.p = subprocess.Popen(
             cmd, cwd=str(ICI.parent), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL, text=True, bufsize=1, start_new_session=True,
@@ -36,16 +39,35 @@ class Processus:
         self.q.put(None)
 
     def vider(self):
-        """Transmet les lignes reçues ; renvoie False quand le processus est fini."""
+        """Transmet les lignes reçues ; renvoie False quand le processus est fini.
+
+        La fin est détectée sur le processus principal, pas seulement sur la
+        fermeture de sa sortie : des sous-processus de crappy (caméras, fenêtres
+        VideoExtenso, Grapher) peuvent garder la sortie ouverte après la fin de
+        l'essai. Ils sont alors arrêtés pour libérer caméras et ports série."""
         try:
             while True:
                 ligne = self.q.get_nowait()
                 if ligne is None:
-                    self.sur_fin(self.p.returncode)
-                    return False
+                    return self._terminer()
                 self.sur_ligne(ligne)
         except queue.Empty:
+            pass
+        if self.p.poll() is None:
             return True
+        if self.t_mort is None:
+            self.t_mort = time.monotonic()      # laisse arriver les dernières lignes
+        elif time.monotonic() - self.t_mort > 1.5:
+            self.signal(signal.SIGTERM)          # restes du groupe de processus
+            threading.Timer(3, self.signal, (signal.SIGKILL,)).start()
+            return self._terminer()
+        return True
+
+    def _terminer(self):
+        if not self.fini:
+            self.fini = True
+            self.sur_fin(self.p.returncode)
+        return False
 
     def vivant(self):
         return self.p.poll() is None

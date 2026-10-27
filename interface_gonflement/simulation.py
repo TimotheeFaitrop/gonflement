@@ -158,3 +158,61 @@ class CamerasSimulees(crappy.blocks.Block):
             out[f"exx_{s}"] = 100 * (np.ptp(x) / self.l0[s][0] - 1)
             out[f"eyy_{s}"] = 100 * (np.ptp(y) / self.l0[s][1] - 1)
         self.send(out)
+
+
+def images_mire(dossier, z_list, t_plan, afficher=True, ncx=12, ncy=12, sqr=7.5):
+    """Acquisition de calibration simulée : la mire ChArUco de Pycaso (DICT_6X6_250,
+    12 x 12 carrés de 7,5 mm) posée à chaque hauteur et vue par les deux caméras du
+    banc. Images nommées comme DualXiAPICamera (calib_crappy_V2)."""
+    import cv2
+    from pathlib import Path
+    dossier = Path(dossier)
+    dico = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_250)
+    planche = cv2.aruco.CharucoBoard((ncx, ncy), sqr, sqr / 2, dico)
+    px_mm = 20
+    L, H = int(ncx * sqr * px_mm), int(ncy * sqr * px_mm)
+    img_planche = planche.generateImage((L, H), marginSize=0)
+    banc = BancStereo()
+    taille = banc.taille
+    coins_px = np.float32([[0, 0], [L, 0], [L, H], [0, H]])
+    x0, y0 = 40 - ncx * sqr / 2, 40 - ncy * sqr / 2          # mire centrée sur le banc
+    graphe = None
+    if afficher:
+        try:
+            import matplotlib.pyplot as plt
+            plt.ion()
+            fig, ax = plt.subplots(figsize=(6, 3.5))
+            fig.canvas.manager.set_window_title("Hauteur du plateau (simulation)")
+            ax.set_xlabel("t (s)"), ax.set_ylabel("position (mm)")
+            ligne, = ax.step([], [], where="post")
+            graphe = (plt, ax, ligne, [], [])
+        except Exception:
+            graphe = None
+    for cote in ("left", "right"):
+        (dossier / f"video_extenso_{cote}").mkdir(parents=True, exist_ok=True)
+    for i, z in enumerate(z_list):
+        # mire imprimée face visible : la ligne 0 de l'image de la planche est en haut
+        # (y monde max) vue du dessus, sinon l'image est en miroir et ArUco ne lit rien
+        monde = np.array([[x0, y0 + ncy * sqr, z], [x0 + ncx * sqr, y0 + ncy * sqr, z],
+                          [x0 + ncx * sqr, y0, z], [x0, y0, z]])
+        t = i * t_plan
+        for cam, cote in ((0, "left"), (1, "right")):
+            M = cv2.getPerspectiveTransform(coins_px, np.float32(banc.projeter(monde, cam)))
+            im = cv2.warpPerspective(img_planche, M, (taille, taille), flags=cv2.INTER_LINEAR,
+                                     borderValue=90)
+            cv2.imwrite(str(dossier / f"video_extenso_{cote}" / f"{i:06d}__{t:.3f}.tiff"), im)
+        print(f"[simulation] plan {i + 1}/{len(z_list)} : Z = {z} mm, 2 images de la mire",
+              flush=True)
+        if graphe:
+            plt_, ax, ligne, ts, zs = graphe
+            ts += [t, t + t_plan]
+            zs += [z, z]
+            ligne.set_data(ts, zs)
+            ax.relim(), ax.autoscale_view()
+            plt_.pause(0.05)
+        else:
+            time.sleep(0.05)
+    if graphe:
+        graphe[0].ioff()
+        graphe[0].show(block=False)
+        graphe[0].pause(1.5)

@@ -181,6 +181,23 @@ class Application(Formulaire, tk.Tk):
         self.lancer(nom, [self.python(), "-u", str(self.ICI / "outils_machine.py"), action]
                     + [str(x) for x in args])
 
+    def verifier_memoire_usb(self):
+        """Comme les scripts d'origine (echo 0 | sudo tee …usbfs_memory_mb) : sans ça les
+        caméras Ximea 2048 x 2048 ne renvoient pas d'images. Demande le mot de passe si besoin."""
+        if self.v("materiel.simulation").get():
+            return True
+        f = Path("/sys/module/usbcore/parameters/usbfs_memory_mb")
+        try:
+            if f.read_text().strip() == "0":
+                return True
+        except OSError:
+            return True        # paramètre absent : rien à libérer
+        if self.materiel.memoire_usb("La mémoire USB des caméras doit être libérée "
+                                     "(usbfs_memory_mb = 0).\n"):
+            return True
+        return messagebox.askyesno("Mémoire USB", "Mémoire USB non libérée : les caméras "
+                                   "risquent de ne renvoyer aucune image.\nContinuer quand même ?")
+
     def ecrire_config(self, nom):
         """Écrit les réglages (chemins absolus) pour un lanceur ; renvoie le fichier."""
         if not self.sauver_reglages():

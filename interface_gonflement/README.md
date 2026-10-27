@@ -45,6 +45,9 @@ Code : `stereo_3d.py` (bloc `StereoDeformation`). `PolyZernike.py` et
 **Pendant l'essai** : nouvelle consigne, nouvelle vitesse, pause/reprise,
 « Terminer le profil », courbes et valeurs en direct.
 
+**Après l'essai** : « Relancer le même essai » refait un essai avec exactement
+les mêmes paramètres, dans un nouveau dossier `Mesure_0000N`.
+
 **Sécurité** (dans le bloc crappy, donc active même si l'interface plante) :
 pression max (coupure définitive), débit max, variation max du débit, durée max.
 **Arrêter** = arrêt propre (débit à 0, fermeture des appareils) ;
@@ -65,16 +68,21 @@ Mêmes paramètres et valeurs par défaut que les programmes du dépôt :
 1. **Réglage** (`reglage_hauteur_*.py`) : réglage initial (origine, aperçu des
    caméras, puis Z = 20 et 120 mm), début d'essai (Z = 70), réinitialiser
    (Z = 120), origine seule, aperçu seul, test des caméras, aller à un Z.
-2. **Essai et plans z** (`Pycaso/calibration_gui.py`) : date (aujourd'hui),
-   dossier images calib (`../../Expériences/<date>/calib`, suit la date tant
-   qu'on ne le modifie pas), z départ 70, pas 2, nb plans 20.
+2. **Essai et plans z** : dossier racine (choisi en parcourant le PC), date
+   (aujourd'hui), nom de l'essai (`Mvt_Rigide` comme `calib_crappy_V2`). Les images
+   vont dans `<racine>/<date>/<nom>/Mesure` (puis `Mesure_00001`… s'il est déjà
+   rempli), avec `video_extenso_left/` et `video_extenso_right/`. Plans donnés par
+   **Z départ, Z fin (incluse) et pas** : 70 → 32 par 2 = 20 plans, comme avant.
+   « Images pour le calcul » suit ce dossier (modifiable pour un ancien essai) ;
+   résultats dans `<racine>/<date>/<nom>/results_calib`.
 3. **Acquisition** (`calib_crappy_V2.py`) : expositions 28757 µs (gauche) et
-   41389 µs (droite), 1 + pas/0,6 s par plan, dossier unique (`_00001`…) s'il
-   existe déjà. Chaque acquisition écrit dans le dossier images calib le document
-   `hauteurs_calibration.txt` (et `.csv`) : hauteur de départ, pas, nombre de
-   plans, hauteur de chaque plan et images associées ; le calcul y ajoute la
-   méthode utilisée. Bouton « Écrire le document des hauteurs » pour le générer
-   sans acquisition.
+   41389 µs (droite), 1 + pas/0,6 s par plan, **graphe de la hauteur du plateau**
+   (Grapher crappy, option). La mémoire USB des caméras est vérifiée avant le
+   lancement (mot de passe sudo demandé si besoin, sans quoi les caméras ne
+   renvoient aucune image) et le nombre d'images enregistrées est affiché à la
+   fin. Document `hauteurs_calibration.txt` (et `.csv`) écrit à chaque
+   acquisition ; bouton pour le générer sans acquisition. En simulation, des
+   images de synthèse de la mire ChArUco sont créées (calculables par Pycaso).
 4. **Méthode** (`Pycaso/calibration_gui.py`) : Lagrange degré 4 / 10 itérations,
    Soloff 332 / 8, Zernike ordre 6 / 9 ; changer de méthode remet ces valeurs.
    Options metadata et nuage 3D, mire 12 × 12 carrés de 7,5 mm. Un résultat

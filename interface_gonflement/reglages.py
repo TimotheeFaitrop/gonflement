@@ -76,14 +76,16 @@ DEFAUTS = {
     "calibration": {
         "z_depart": 70.0,
         "pas_z": 2.0,
-        "n_plans": 20,
+        "z_fin": 32.0,                    # dernière hauteur photographiée (incluse)
+        "nom_essai": "Mvt_Rigide",        # <racine>/<date>/<nom>/Mesure, comme calib_crappy_V2
         "temps_plan": 0.0,                # s, 0 = calcul auto (comme calib_crappy_V2)
         "expo_droite": 41389,
         "expo_gauche": 28757,
+        "graphe_hauteur": True,           # Grapher de la position du plateau
         "z_reglage": 70.0,                # hauteur pour "Aller à Z"
         # comme Pycaso/calibration_gui.py
         "date": "",                       # vide = aujourd'hui (AAAA_MM_JJ)
-        "dossier_images": "",             # vide = <racine>/<date>/calib
+        "dossier_images": "",             # vide = <racine>/<date>/<nom>/Mesure
         "methode": "Lagrange",
         "pform": "4",
         "iterations": 10,
@@ -132,10 +134,22 @@ def dossier_unique(base):
         i += 1
 
 
-def z_liste(z_depart, pas_z, n_plans):
-    """Hauteurs de calibration, identiques à Pycaso/calibration_gui (descendantes)."""
-    z = [z_depart - pas_z * i for i in range(int(n_plans))]
+def z_liste(z_depart, z_fin, pas_z):
+    """Hauteurs de calibration de z_depart à z_fin (inclus) par pas de |pas_z|,
+    en descendant si z_fin < z_depart. 70, 32, 2 -> 70, 68, ..., 32 (20 plans),
+    soit les plans de calib_crappy_V2 (range(70, 30, -2))."""
+    pas = abs(float(pas_z))
+    if pas == 0:
+        raise ValueError("le pas doit être non nul")
+    sens = -1 if z_fin < z_depart else 1
+    n = int(abs(z_fin - z_depart) / pas + 1e-9) + 1
+    z = [round(z_depart + sens * pas * i, 6) for i in range(n)]
     return [int(v) if float(v).is_integer() else v for v in z]
+
+
+def zl(cal):
+    """z_liste à partir de la section « calibration » des réglages."""
+    return z_liste(cal["z_depart"], cal["z_fin"], cal["pas_z"])
 
 
 def degre_depuis_chemin(fichier, defaut=None):

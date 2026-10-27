@@ -64,21 +64,23 @@ class OngletMateriel(ttk.Frame):
             "Réglages aussi enregistrés à chaque lancement et à la fermeture "
             "(interface_gonflement/reglages_utilisateur.json).")).pack(anchor="w", padx=8, pady=4)
 
-    def memoire_usb(self):
-        """echo 0 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb"""
-        mdp = simpledialog.askstring("sudo", "Mot de passe sudo :", show="*", parent=self)
+    def memoire_usb(self, raison=""):
+        """echo 0 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
+        Renvoie True si la mémoire est libérée."""
+        mdp = simpledialog.askstring("sudo", f"{raison}Mot de passe sudo :", show="*", parent=self)
         if mdp is None:
-            return
+            return False
         try:
             r = subprocess.run(["sudo", "-S", "-p", "", "tee",
                                 "/sys/module/usbcore/parameters/usbfs_memory_mb"],
                                input=(mdp + "\n0\n").encode(), capture_output=True, timeout=15)
             if r.returncode == 0:
                 self.app.log("Mémoire USB des caméras libérée (usbfs_memory_mb = 0)", "info")
-            else:
-                self.app.log("Échec : " + r.stderr.decode(errors="ignore").strip(), "erreur")
+                return True
+            self.app.log("Échec : " + r.stderr.decode(errors="ignore").strip(), "erreur")
         except (OSError, subprocess.SubprocessError) as e:
             self.app.log(f"Échec : {e}", "erreur")
+        return False
 
     def debit_zero(self, attendre=False):
         """Consigne 0 écrite directement dans l'Alicat (hors essai, ou après un kill)."""

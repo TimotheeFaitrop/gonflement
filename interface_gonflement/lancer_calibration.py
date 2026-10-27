@@ -14,7 +14,6 @@
 """
 
 import json
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -23,7 +22,7 @@ ICI = Path(__file__).resolve().parent
 sys.path.insert(0, str(ICI.parent))
 sys.path.insert(0, str(ICI))
 
-from reglages import dossier_unique, z_liste  # noqa: E402
+from reglages import dossier_unique, zl  # noqa: E402
 
 # crappy ne garde qu'une référence faible vers les blocs
 _BLOCS = []
@@ -42,7 +41,7 @@ def ecrire_document(dossier, cfg, statut):
     images prises, si elles existent) dans le dossier de calibration."""
     mat, cal = cfg["materiel"], cfg["calibration"]
     dossier = Path(dossier)
-    z = z_liste(cal["z_depart"], cal["pas_z"], cal["n_plans"])
+    z = zl(cal)
     images = {}
     for cote in ("left", "right"):
         images[cote] = sorted(p.name for p in (dossier / f"video_extenso_{cote}").glob("*.tif*"))
@@ -58,8 +57,8 @@ def ecrire_document(dossier, cfg, statut):
         "",
         f"Hauteur de départ        : {n(cal['z_depart'])} mm",
         f"Pas (descente par plan)  : {n(cal['pas_z'])} mm",
-        f"Nombre de plans          : {cal['n_plans']}",
-        f"Hauteur finale           : {z[-1]} mm",
+        f"Hauteur finale           : {n(cal['z_fin'])} mm",
+        f"Nombre de plans          : {len(z)}",
         f"Plage couverte           : {z[0]} -> {z[-1]} mm ({n(abs(z[0] - z[-1]))} mm)",
         f"Temps par plan           : {t:.0f} s (vitesse plateau 100 mm/min)",
         f"Exposition gauche/droite : {cal['expo_gauche']} / {cal['expo_droite']} µs",
@@ -86,24 +85,30 @@ def ecrire_document(dossier, cfg, statut):
     print(f"Document des hauteurs : {dossier / DOCUMENT}", flush=True)
 
 
+def memoire_usb_liberee():
+    try:
+        return Path("/sys/module/usbcore/parameters/usbfs_memory_mb").read_text().strip() == "0"
+    except OSError:
+        return True   # pas de paramètre (autre système) : rien à faire
+
+
 def acquisition(cfg):
     mat, cal = cfg["materiel"], cfg["calibration"]
-    z = z_liste(cal["z_depart"], cal["pas_z"], cal["n_plans"])
+    z = zl(cal)
     t_plan = temps_par_plan(cal)
 
-    # même règle que get_unique_save_path de calib_crappy_V2 : dossier, puis dossier_00001...
-    dossier = dossier_unique(Path(cal["dossier_images"]))
+    # <racine>/<date>/<nom de l'essai>/Mesure, comme ./<date>/Mvt_Rigide/Mesure de
+    # calib_crappy_V2, puis Mesure_00001... s'il est déjà rempli (get_unique_save_path)
+    dossier = dossier_unique(Path(mat["dossier_racine"]) / cal["date"] / cal["nom_essai"] / "Mesure")
     print(f"DOSSIER_CALIB={dossier.resolve()}", flush=True)
     ecrire_document(dossier, cfg, "acquisition en cours")
     print(f"{len(z)} plans : {z[0]} -> {z[-1]} mm, {t_plan:.1f} s par plan "
           f"(~{len(z) * t_plan / 60:.1f} min)", flush=True)
 
     if mat["simulation"]:
-        for i, zi in enumerate(z):
-            time.sleep(min(t_plan, 0.3))
-            print(f"[simulation] plan {i + 1}/{len(z)} : Z = {zi} mm, images prises",
-                  flush=True)
-        ecrire_document(dossier, cfg, "acquisition simulée (aucune image)")
+        import simulation
+        simulation.images_mire(dossier, z, t_plan, afficher=cal.get("graphe_hauteur", True))
+        ecrire_document(dossier, cfg, "acquisition simulée (images de synthèse)")
         print("Acquisition simulée terminée")
         return
 
@@ -112,11 +117,9 @@ def acquisition(cfg):
     import moteur  # noqa: F401  enregistre Printer
     from calib_crappy_V2 import DualXiAPICamera
 
-    r = subprocess.run(["sudo", "-n", "tee",
-                        "/sys/module/usbcore/parameters/usbfs_memory_mb"],
-                       input=b"0\n", capture_output=True)
-    if r.returncode != 0:
-        print("ATTENTION : mémoire USB non libérée (voir onglet Matériel)")
+    if not memoire_usb_liberee():
+        print("ATTENTION : usbfs_memory_mb n'est pas à 0 : les caméras risquent de ne "
+              "renvoyer aucune image (bouton « Libérer la mémoire USB »)", flush=True)
 
     ftdi = crappy.blocks.IOBlock("Ft232r", cmd_labels=["cmd"], spam=False,
                                  direction=0b00000100, URL=mat["url_ftdi"])
@@ -142,21 +145,30 @@ def acquisition(cfg):
 
     crappy.link(gen_ft, ftdi)
     crappy.link(gen_mot, mot)
+    if cal.get("graphe_hauteur", True):
+        # comme calib_crappy_V2 : courbe de la hauteur du plateau pendant l'acquisition
+        graph_mot = crappy.blocks.Grapher(("t(s)", "position"))
+        _BLOCS.append(graph_mot)
+        crappy.link(mot, graph_mot)
     crappy.start(no_raise=True)
 
     n_g = len(list((dossier / "video_extenso_left").glob("*.tiff")))
     n_d = len(list((dossier / "video_extenso_right").glob("*.tiff")))
-    print(f"Images : gauche {n_g}, droite {n_d} (attendu {len(z)})")
+    print(f"Images : gauche {n_g}, droite {n_d} (attendu {len(z)}) dans {dossier}")
     ecrire_document(dossier, cfg, "acquisition terminée")
-    if n_g != len(z) or n_d != len(z):
+    if n_g == 0 and n_d == 0:
+        print("ERREUR : aucune image enregistrée. Causes possibles : mémoire USB non "
+              "libérée, câble de déclenchement FT232R, caméras ouvertes par un autre "
+              "programme (xiCamTool), exposition trop longue.")
+    elif n_g != len(z) or n_d != len(z):
         print("ATTENTION : nombre d'images différent du nombre de plans")
 
 
 def calcul(cfg):
     cal = cfg["calibration"]
     dossier = Path(cal["dossier_images"])
-    # z_list comme Pycaso/calibration_gui : z départ - pas * [0 .. nb plans - 1]
-    z = z_liste(cal["z_depart"], cal["pas_z"], cal["n_plans"])
+    # mêmes hauteurs que l'acquisition : z départ -> z fin par pas
+    z = zl(cal)
     print(f"z_list : {z}", flush=True)
 
     import numpy as np

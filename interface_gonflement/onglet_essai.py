@@ -1,5 +1,6 @@
 """Onglet Essai : paramètres du pilotage, valeurs et commandes en direct, courbes."""
 
+import json
 import math
 import time
 import tkinter as tk
@@ -128,6 +129,10 @@ class OngletEssai(ttk.Frame):
         self.btn_go = ttk.Button(f, text="▶  Démarrer l'essai", style="Go.TButton",
                                  command=self.demarrer)
         self.btn_go.pack(fill="x", pady=2)
+        self.btn_relancer = ttk.Button(f, text="↻  Relancer le même essai", command=self.relancer)
+        self.btn_relancer.pack(fill="x", pady=2)
+        Bulle(self.btn_relancer, "Mêmes paramètres que l'essai précédent, nouveau dossier "
+                                 "Mesure_0000N (les champs modifiés depuis sont ignorés)")
         self.btn_stop = ttk.Button(f, text="■  Arrêter l'essai", command=a.arreter,
                                    state="disabled")
         self.btn_stop.pack(fill="x", pady=2)
@@ -249,7 +254,7 @@ class OngletEssai(ttk.Frame):
         m = self.app.v("essai.deformation.methode_3d").get()
         motif = "nZ_*/A_Zernike.npy" if m == "Zernike" else "Lpform_*/L_constants.npy"
         racine = self.app.chemin(self.app.v("materiel.dossier_racine").get())
-        trouves = sorted(racine.glob(f"*/[Rr]esults_[Cc]alib/{motif}"),
+        trouves = sorted(racine.glob(f"**/[Rr]esults_[Cc]alib/{motif}"),
                          key=lambda p: p.stat().st_mtime) if racine.is_dir() else []
         if not trouves:
             messagebox.showinfo("Calibration", f"Aucun {motif} dans {racine}/<date>/results_calib/")
@@ -258,7 +263,11 @@ class OngletEssai(ttk.Frame):
         self.app.log(f"Calibration 3D : {trouves[-1]}", "info")
 
     def etat_boutons(self):
+        if self.en_cours and not (self.app.proc and self.app.proc.vivant()):
+            self.en_cours = self.en_pause = False      # le processus d'essai n'existe plus
         self.btn_go.configure(state="disabled" if self.en_cours else "normal")
+        dernier = (self.app.ICI / "derniere_config_essai.json").is_file()
+        self.btn_relancer.configure(state="normal" if dernier and not self.en_cours else "disabled")
         self.btn_stop.configure(state="normal" if self.en_cours else "disabled")
         for b in self.boutons_direct:
             b.configure(state="normal" if self.en_cours else "disabled")
@@ -278,10 +287,33 @@ class OngletEssai(ttk.Frame):
         if erreurs:
             messagebox.showerror("Paramètres à corriger", "\n".join(erreurs))
             return
+        if not cfg["materiel"]["simulation"] and not a.verifier_memoire_usb():
+            return
         if not messagebox.askokcancel("Démarrer l'essai ?", resume(cfg)):
             return
         fichier = a.ecrire_config("derniere_config_essai.json")
-        if fichier is None or not a.ecouter_mesures(cfg["materiel"]["port_udp_donnees"]):
+        if fichier is not None:
+            self._lancer(fichier, cfg)
+
+    def relancer(self):
+        """Relance l'essai précédent avec exactement les mêmes paramètres."""
+        a = self.app
+        fichier = a.ICI / "derniere_config_essai.json"
+        if a.occupe() or not fichier.is_file():
+            return
+        with open(fichier, encoding="utf-8") as f:
+            cfg = json.load(f)
+        if not cfg["materiel"]["simulation"] and not a.verifier_memoire_usb():
+            return
+        if not messagebox.askokcancel("Relancer l'essai ?", "Mêmes paramètres que l'essai "
+                                      "précédent, données dans un nouveau dossier Mesure.\n\n"
+                                      + resume(cfg)):
+            return
+        self._lancer(fichier, cfg)
+
+    def _lancer(self, fichier, cfg):
+        a = self.app
+        if not a.ecouter_mesures(cfg["materiel"]["port_udp_donnees"]):
             return
         mode = cfg["essai"]["mode"]
         self.courbes.donnees.clear()
@@ -299,6 +331,8 @@ class OngletEssai(ttk.Frame):
             self.etat_boutons()
             if self.dossier:
                 a.log(f"Données enregistrées dans {self.dossier}", "info")
+            a.log("Essai terminé : « Relancer le même essai » pour en refaire un "
+                  "identique, ou modifier les paramètres puis « Démarrer ».", "info")
 
         if a.lancer(f"Essai ({mode})", [a.python(), "-u", str(a.ICI / "lancer_essai.py"),
                                         str(fichier)], sur_fin=fin, sur_ligne=sur_ligne):
