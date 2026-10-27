@@ -60,13 +60,13 @@ class Detect3D:
                  images_a_tracer=(-1,),     # indices des images tracées (-1 = dernière)
                  deplacement=True,          # tracer z - z(image 0) plutôt que z
                  inverser_z=True,           # changer le signe de Z (dôme vers le haut)
-                 seuil_aberrants=60.0,      # déplacement max (mm) affiché ; 0 = pas de filtre
+                 seuil_aberrants=100.0,      # déplacement max (mm) affiché ; 0 = pas de filtre
                  couleurs_fixes=False,      # échelle de couleur fixe (sinon : min/max des données)
                  z_min=-10.0,               # bas de l'échelle fixe (mm), violet foncé
                  z_bleu=0.0,                # Z (mm) affiché en bleu
                  z_jaune=60.0,              # Z (mm) affiché en jaune
                  z_max=100.0,               # haut de l'échelle fixe (mm), jaune vif
-                 enregistrer_figures=True,  # enregistrer les figures en .png dans dossier_sortie
+                 enregistrer_figures=True,  # enregistrer les figures en .svg dans dossier_sortie
                  afficher_figures=True):    # ouvrir les figures à l'écran
         if methode not in self.METHODES:
             raise ValueError(f"Méthode inconnue : {methode} (choix : {', '.join(self.METHODES)})")
@@ -296,7 +296,7 @@ class Detect3D:
             cbar.set_ticks([self.z_min, self.z_bleu, self.z_jaune, self.z_max])
             cbar.set_ticklabels([f"{v:g}" for v in (self.z_min, self.z_bleu, self.z_jaune, self.z_max)])
         if self.enregistrer_figures:
-            plt.savefig(self.dossier_sortie / f"Déplacement_{num}-{nb}.png")
+            plt.savefig(self.dossier_sortie / f"Déplacement_{num}-{nb}.svg")
         if self.afficher_figures:
             plt.show()
         plt.close(fig)

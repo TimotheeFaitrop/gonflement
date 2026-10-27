@@ -21,7 +21,7 @@ class Detect3DGUI:
     CASES = [
         ("deplacement", "Tracer le déplacement z − z(image 0) plutôt que z"),
         ("inverser_z", "Inverser l'axe Z (dôme vers le haut)"),
-        ("enregistrer_figures", "Enregistrer les figures (.png dans le dossier des résultats)"),
+        ("enregistrer_figures", "Enregistrer les figures (.svg dans le dossier des résultats)"),
         ("afficher_figures", "Afficher les figures à la fin"),
     ]
     PAD = {"padx": 6, "pady": 3}
