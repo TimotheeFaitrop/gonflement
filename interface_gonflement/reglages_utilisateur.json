@@ -15,12 +15,12 @@
     "taille_image": 2048,
     "dossier_racine": "../../Expériences",
     "port_udp_donnees": 50555,
-    "port_udp_commandes": 50556,
-    "python": "C:\\Users\\jazzo\\AppData\\Local\\Programs\\Python\\Python313\\python.exe"
+    "port_udp_commandes": 50556
   },
   "essai": {
     "echantillon": "Pro_Grip",
-    "mode": "deformation",
+    "dossier": "C:/Users/jazzo/Desktop/doctorat/code/Données_Gonflement/Données/2026_10_23",
+    "mode": "debit",
     "freq_cam": 2.5,
     "sauver_images": true,
     "graphers_crappy": false,
@@ -53,7 +53,7 @@
       "ki": 2.0,
       "kff": 0.0,
       "timeout_mesure": 5.0,
-      "methode_3d": "Lagrange",
+      "methode_3d": "Zernike",
       "pform": 4,
       "fichier_constantes": "",
       "rotation_droite": true
@@ -67,7 +67,8 @@
     "expo_droite": 41389,
     "expo_gauche": 28757,
     "z_reglage": 70.0,
-    "dossier_images": "",
+    "date": "2026_10_27",
+    "dossier_images": "../../Expériences/2026_10_27/calib",
     "methode": "Lagrange",
     "pform": "4",
     "iterations": 10,

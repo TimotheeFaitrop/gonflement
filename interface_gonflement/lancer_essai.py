@@ -26,7 +26,7 @@ import crappy  # noqa: E402
 
 import blocs_pilotage as bp  # noqa: E402
 import simulation  # noqa: E402,F401  enregistre AlicatSimule
-from reglages import dossier_unique  # noqa: E402
+from reglages import dossier_base_essai, dossier_unique  # noqa: E402
 
 # crappy ne garde qu'une référence faible vers les blocs : on les conserve ici,
 # sinon un bloc créé directement dans crappy.link(...) disparaît.
@@ -64,8 +64,7 @@ def main(fichier_config):
     fs = float(mat["pleine_echelle"])
 
     date = time.strftime("%Y_%m_%d")
-    dossier = dossier_unique(Path(mat["dossier_racine"]) / date
-                             / ess["echantillon"] / "Mesure")
+    dossier = dossier_unique(dossier_base_essai(cfg, date) / "Mesure")
     # le chemin est lu par l'interface : ne pas changer ce préfixe
     print(f"DOSSIER_ESSAI={dossier.resolve()}", flush=True)
     with open(dossier / "parametres_essai.json", "w", encoding="utf-8") as f:

@@ -46,14 +46,14 @@ class OngletEssai(ttk.Frame):
     def colonne_parametres(self, g):
         a = self.app
         f = a.cadre(g, "Échantillon et mode de pilotage")
-        a.champ(f, 0, "Échantillon", "essai.echantillon", largeur=24,
-                aide="Dossier : <racine>/<date>/<échantillon>/Mesure")
-        self.lbl_prevu = a.note(f, 1, "")
-        for cle in ("essai.echantillon", "materiel.dossier_racine"):
+        a.champ(f, 0, "Échantillon", "essai.echantillon", largeur=24)
+        a.chemin_choisi(f, 1, "Dossier de l'essai", "essai.dossier", dossier=True, largeur=22)
+        self.lbl_prevu = a.note(f, 2, "")
+        for cle in ("essai.echantillon", "essai.dossier", "materiel.dossier_racine"):
             a.v(cle).trace_add("write", lambda *_: self.maj_prevu())
         self.maj_prevu()
         modes = ttk.Frame(f)
-        modes.grid(row=2, column=0, columnspan=3, sticky="w", padx=4, pady=4)
+        modes.grid(row=3, column=0, columnspan=3, sticky="w", padx=4, pady=4)
         for i, (val, txt) in enumerate((("debit", "Débit"), ("pression", "Pression"),
                                         ("deformation", "Déformation"))):
             ttk.Radiobutton(modes, text=txt, value=val, variable=a.v("essai.mode"),
@@ -228,9 +228,13 @@ class OngletEssai(ttk.Frame):
             "rapproche des caméras) ; « toutes » = moyenne exx/eyy."))
 
     def maj_prevu(self):
-        racine = self.app.chemin(self.app.v("materiel.dossier_racine").get())
-        self.lbl_prevu.configure(text=f"→ {racine / time.strftime('%Y_%m_%d')}/"
-                                      f"{self.app.v('essai.echantillon').get()}/Mesure…")
+        a = self.app
+        choisi = a.v("essai.dossier").get().strip()
+        base = a.chemin(choisi) if choisi else (
+            a.chemin(a.v("materiel.dossier_racine").get()) / time.strftime("%Y_%m_%d")
+            / a.v("essai.echantillon").get())
+        aide = "" if choisi else "  (dossier vide : racine/date/échantillon)"
+        self.lbl_prevu.configure(text=f"Données dans : {base}/Mesure…{aide}")
 
     def degre_auto(self):
         fichier = self.app.v("essai.deformation.fichier_constantes").get()

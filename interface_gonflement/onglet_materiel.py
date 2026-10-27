@@ -49,9 +49,8 @@ class OngletMateriel(ttk.Frame):
         a.chemin_choisi(f, 0, "Dossier des expériences", "materiel.dossier_racine",
                         dossier=True, largeur=40)
         a.note(f, 1, "Relatif à la racine du dépôt s'il n'est pas absolu.")
-        a.champ(f, 2, "Interpréteur Python", "materiel.python", largeur=40)
-        a.champ(f, 3, "Port UDP mesures", "materiel.port_udp_donnees")
-        a.champ(f, 4, "Port UDP commandes", "materiel.port_udp_commandes")
+        a.champ(f, 2, "Port UDP mesures", "materiel.port_udp_donnees")
+        a.champ(f, 3, "Port UDP commandes", "materiel.port_udp_commandes")
 
         f = a.cadre(g, "Outils")
         b = ttk.Frame(f)

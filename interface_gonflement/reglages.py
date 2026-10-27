@@ -6,7 +6,6 @@ Les valeurs par défaut reprennent celles des scripts du dépôt
 
 import copy
 import json
-import sys
 from pathlib import Path
 
 DOSSIER_INTERFACE = Path(__file__).resolve().parent
@@ -31,10 +30,10 @@ DEFAUTS = {
         "dossier_racine": "../../Expériences",
         "port_udp_donnees": 50555,
         "port_udp_commandes": 50556,
-        "python": sys.executable,
     },
     "essai": {
         "echantillon": "Pro_Grip",
+        "dossier": "",                    # vide = <racine>/<date>/<échantillon>
         "mode": "debit",                  # "debit" | "pression" | "deformation"
         "freq_cam": 2.5,                  # Hz, déclenchement FT232R
         "sauver_images": True,
@@ -82,10 +81,12 @@ DEFAUTS = {
         "expo_droite": 41389,
         "expo_gauche": 28757,
         "z_reglage": 70.0,                # hauteur pour "Aller à Z"
-        "dossier_images": "",
-        "methode": "Zernike",
-        "pform": "12",
-        "iterations": 9,
+        # comme Pycaso/calibration_gui.py
+        "date": "",                       # vide = aujourd'hui (AAAA_MM_JJ)
+        "dossier_images": "",             # vide = <racine>/<date>/calib
+        "methode": "Lagrange",
+        "pform": "4",
+        "iterations": 10,
         "deplacer_metadata": False,
         "afficher_3d": True,
     },
@@ -145,3 +146,12 @@ def degre_depuis_chemin(fichier, defaut=None):
         if m:
             return int(m.group(1))
     return defaut
+
+
+def dossier_base_essai(cfg, date):
+    """Dossier choisi dans l'interface, sinon <racine>/<date>/<échantillon>.
+    Les données vont dans <ce dossier>/Mesure (puis Mesure_00001, ...)."""
+    ess = cfg["essai"]
+    if ess.get("dossier", "").strip():
+        return Path(ess["dossier"].strip())
+    return Path(cfg["materiel"]["dossier_racine"]) / date / ess["echantillon"]

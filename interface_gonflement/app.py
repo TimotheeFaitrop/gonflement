@@ -63,10 +63,11 @@ class Application(Formulaire, tk.Tk):
         self.onglets = ttk.Notebook(panneau)
         panneau.add(self.onglets, weight=5)
         panneau.add(self._console(panneau), weight=1)
+        self.onglets.add(OngletCalibration(self.onglets, self), text="Calibration")
         self.essai = OngletEssai(self.onglets, self)
         self.onglets.add(self.essai, text="Essai")
-        self.onglets.add(OngletCalibration(self.onglets, self), text="Calibration")
-        self.onglets.add(OngletMateriel(self.onglets, self), text="Matériel")
+        self.materiel = OngletMateriel(self.onglets, self)
+        self.onglets.add(self.materiel, text="Matériel")
         self.maj_bandeau()
         self.protocol("WM_DELETE_WINDOW", self.quitter)
         self.after(100, self._boucle)
@@ -136,7 +137,8 @@ class Application(Formulaire, tk.Tk):
 
     # ------------------------------------------------------------------ processus
     def python(self):
-        return self.v("materiel.python").get().strip() or sys.executable
+        """Même Python que celui qui a lancé l'interface."""
+        return sys.executable
 
     def occupe(self):
         if self.proc is not None and self.proc.vivant():
@@ -185,6 +187,10 @@ class Application(Formulaire, tk.Tk):
             return None
         cfg = json.loads(json.dumps(self.reglages))
         cfg["materiel"]["dossier_racine"] = str(self.chemin(cfg["materiel"]["dossier_racine"]))
+        if cfg["calibration"]["dossier_images"]:
+            cfg["calibration"]["dossier_images"] = str(self.chemin(cfg["calibration"]["dossier_images"]))
+        if cfg["essai"]["dossier"]:
+            cfg["essai"]["dossier"] = str(self.chemin(cfg["essai"]["dossier"]))
         f = self.ICI / nom
         with open(f, "w", encoding="utf-8") as fh:
             json.dump(cfg, fh, indent=2, ensure_ascii=False)
@@ -252,7 +258,7 @@ class Application(Formulaire, tk.Tk):
             p.signal(signal.SIGINT)
             self.after(2500, lambda: self._tuer(p, debit_zero=True))
         else:
-            self.onglets.nametowidget(self.onglets.tabs()[2]).debit_zero()
+            self.materiel.debit_zero()
 
     def _tuer(self, p, debit_zero=False):
         if p.vivant():
@@ -261,8 +267,7 @@ class Application(Formulaire, tk.Tk):
             debit_zero = True
         if debit_zero and p.nom.startswith("Essai"):
             # le port série est libéré après le kill : on remet la consigne à 0
-            materiel = self.onglets.nametowidget(self.onglets.tabs()[2])
-            self.after(800, lambda: materiel.debit_zero(attendre=True))
+            self.after(800, lambda: self.materiel.debit_zero(attendre=True))
 
     def ouvrir(self, p):
         if not Path(p).exists():

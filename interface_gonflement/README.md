@@ -7,6 +7,8 @@ python lancer_interface.py        # depuis la racine du dépôt
 Dépendances : celles du dépôt (crappy, pymodbus 3.0.2 / 3.8.6 / 3.9.0, pyserial,
 pyftdi, ximea, numpy, opencv) + `matplotlib` et `tkinter` (`sudo apt install python3-tk`).
 
+Ordre des onglets : Calibration, Essai, Matériel.
+
 ## Onglet Essai
 
 Trois modes de pilotage, tous commandent le débit de l'Alicat :
@@ -49,25 +51,39 @@ pression max (coupure définitive), débit max, variation max du débit, durée 
 **ARRÊT D'URGENCE** = débit à 0 et processus tué, puis consigne 0 renvoyée
 directement à l'Alicat.
 
-Données dans `<racine>/<date>/<échantillon>/Mesure[_0000N]/` : mêmes fichiers que
+Données dans `<dossier de l'essai>/Mesure[_0000N]/`. Le dossier de l'essai se choisit
+en parcourant le PC (bouton « … » de l'onglet Essai) ; laissé vide, c'est
+`<racine>/<date>/<échantillon>`. Mêmes fichiers que
 `alicat_flow_crappy_V3.py` (`data_ali.txt`, `data_ver.txt`, `data_vel.txt`,
 images `video_extenso_left|right/`) + `data_stereo_3d.txt` (déformations 3D, uz, points 3D) + `data_pilotage_<mode>.txt` (cible,
 consigne, mesure, commande, état) + `parametres_essai.json`.
 
 ## Onglet Calibration
 
-1. **Réglage** : origine Z, aller à une hauteur (20 / 70 / 120 mm), aperçu des deux
-   caméras avec réticule, test des caméras.
-2. **Acquisition** : reprend `calib_crappy_V2.py` (plateau descendu plan par plan,
-   déclenchement FT232R à l'arrivée). Images dans `<racine>/<date>/calib/`, avec
-   `z_list.json`.
-3. **Calcul** : `Pycaso.calibration_class.Calibration` (Lagrange / Soloff /
-   Zernike), dossier pré-rempli après l'acquisition. Les hauteurs sont relues
-   dans `z_list.json`.
+Mêmes paramètres et valeurs par défaut que les programmes du dépôt :
+
+1. **Réglage** (`reglage_hauteur_*.py`) : réglage initial (origine, aperçu des
+   caméras, puis Z = 20 et 120 mm), début d'essai (Z = 70), réinitialiser
+   (Z = 120), origine seule, aperçu seul, test des caméras, aller à un Z.
+2. **Essai et plans z** (`Pycaso/calibration_gui.py`) : date (aujourd'hui),
+   dossier images calib (`../../Expériences/<date>/calib`, suit la date tant
+   qu'on ne le modifie pas), z départ 70, pas 2, nb plans 20.
+3. **Acquisition** (`calib_crappy_V2.py`) : expositions 28757 µs (gauche) et
+   41389 µs (droite), 1 + pas/0,6 s par plan, dossier unique (`_00001`…) s'il
+   existe déjà. Chaque acquisition écrit dans le dossier images calib le document
+   `hauteurs_calibration.txt` (et `.csv`) : hauteur de départ, pas, nombre de
+   plans, hauteur de chaque plan et images associées ; le calcul y ajoute la
+   méthode utilisée. Bouton « Écrire le document des hauteurs » pour le générer
+   sans acquisition.
+4. **Méthode** (`Pycaso/calibration_gui.py`) : Lagrange degré 4 / 10 itérations,
+   Soloff 332 / 8, Zernike ordre 6 / 9 ; changer de méthode remet ces valeurs.
+   Options metadata et nuage 3D, mire 12 × 12 carrés de 7,5 mm. Un résultat
+   Zernike ou Lagrange est repris automatiquement pour le pilotage 3D.
 
 ## Onglet Matériel
 
 Ports, numéros de série, expositions, URL du FT232R, dossier racine, ports UDP.
+Les programmes sont lancés avec le Python qui a ouvert l'interface.
 Outils : détection des ports, libération de la mémoire USB des caméras (sudo),
 débit à 0. **Mode simulation** : ballon simulé vu par deux caméras virtuelles avec un étalonnage Zernike synthétique (toute la chaîne 3D tourne), aucun matériel — pour prendre
 l'interface en main et dégrossir les gains.

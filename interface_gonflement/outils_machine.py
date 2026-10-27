@@ -5,6 +5,7 @@
     python outils_machine.py origine   PORT_IMPRIMANTE
     python outils_machine.py aller_z   PORT_IMPRIMANTE Z [--origine]
     python outils_machine.py apercu    SN_GAUCHE SN_DROITE EXPO_G EXPO_D
+    python outils_machine.py reglage_init SN_GAUCHE SN_DROITE EXPO_G EXPO_D PORT_IMPRIMANTE
     python outils_machine.py test_cameras SN_GAUCHE SN_DROITE
     python outils_machine.py debit_zero PORT_ALICAT BAUD
 """
@@ -100,6 +101,19 @@ def apercu(sn_g, sn_d, expo_g, expo_d):
         cv2.destroyAllWindows()
 
 
+def reglage_init(sn_g, sn_d, expo_g, expo_d, port):
+    """Comme reglage_hauteur_init.py : origine, aperçu des caméras jusqu'à fermeture,
+    puis Z = 20 et Z = 120 mm pour vérifier la netteté de la mire."""
+    from serial import Serial
+    with Serial(port, baudrate=115200, timeout=2) as dev:
+        time.sleep(2)
+        _envoyer_gcode(dev, "G28 Z0")
+        apercu(sn_g, sn_d, expo_g, expo_d)
+        _envoyer_gcode(dev, "G0 X0 Y0 Z20")
+        _envoyer_gcode(dev, "G0 X0 Y0 Z120")
+    print("Réglage initial terminé (plateau à Z = 120 mm)")
+
+
 def test_cameras(*serials):
     from ximea import xiapi
     ok = True
@@ -151,6 +165,8 @@ if __name__ == "__main__":
         aller_z(args[0], float(args[1]), "--origine" in args)
     elif action == "apercu":
         apercu(*args[:4])
+    elif action == "reglage_init":
+        reglage_init(*args[:5])
     elif action == "test_cameras":
         test_cameras(*args)
     elif action == "debit_zero":
