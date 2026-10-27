@@ -41,13 +41,12 @@ class Calibration:
     def __init__(self, date, path_images, z_list,
                  left_subfolder="video_extenso_left",
                  right_subfolder="video_extenso_right",
-                 reverse=True, show_plot=True):
+                 show_plot=True):
         self.date = date
         self.path_images = Path(path_images)
         self.z_list = np.asarray(z_list)
         self.left_subfolder = left_subfolder
         self.right_subfolder = right_subfolder
-        self.reverse = reverse
         self.show_plot = show_plot
 
     @staticmethod
@@ -65,7 +64,7 @@ class Calibration:
     @classmethod
     def from_params(cls, params):
         """Construit l'objet à partir du dictionnaire renvoyé par l'interface."""
-        keys = ("date", "path_images", "z_list", "reverse", "show_plot")
+        keys = ("date", "path_images", "z_list", "show_plot")
         return cls(**{k: params[k] for k in keys if k in params})
 
     # ----- préparation des données -----
@@ -137,7 +136,6 @@ class Calibration:
     # ----- helpers internes -----
 
     def _prepare(self, tag):
-        self._reverse_right_images_if_needed()
         out = self.results_dir / tag
         out.mkdir(parents=True, exist_ok=True)
         return out
@@ -152,28 +150,6 @@ class Calibration:
             "ncx": self.NCX, "ncy": self.NCY, "sqr": self.SQR,
         }
 
-    def _reverse_right_images_if_needed(self):
-        """Tourne les images droite de 180° une seule fois (fichier témoin).
-
-        ATTENTION : les .tiff d'origine sont écrasés.
-        """
-        if not self.reverse:
-            return
-        flags = [self.path_images / "right_reversed.flag",
-                 self.path_images / "right_reversed.npy"]  # ancien témoin
-        if any(f.exists() for f in flags):
-            print("Images droite déjà retournées (témoin trouvé)")
-            return
-
-        right_dir = self.path_images / self.right_subfolder
-        images = sorted(glob(str(right_dir / "0*")))
-        for p in images:
-            img = cv2.imread(p, cv2.IMREAD_UNCHANGED)  # garde le 16 bits
-            if img is None:
-                raise IOError(f"Impossible de lire {p}")
-            cv2.imwrite(p, cv2.rotate(img, cv2.ROTATE_180))
-        flags[0].touch()
-        print(f"{len(images)} images retournées dans {right_dir}")
 
     def _plot_and_save_3d(self, out, method_name):
         """Trace les coordonnées 3D calculées par Pycaso et sauve la figure."""

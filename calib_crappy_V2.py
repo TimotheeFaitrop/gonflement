@@ -231,7 +231,7 @@ if __name__ == '__main__':
                                 'port': '/dev/ttyACM0'}],
                                 freq=50)
 
-  pas=-10
+  pas=-2
   time_sync = int(1 + abs(pas / 0.6)) #must be at least 1 + 3/5*max_distance, 5s pour 2mm
   print(time_sync)
   path_mot=[]
