@@ -161,6 +161,12 @@ class Application(Formulaire, tk.Tk):
 
         def fin(code):
             self.log(f"===== {nom} terminé (code {code}) =====", "info" if code == 0 else "erreur")
+            if code is not None and code < 0 and -code in (signal.SIGSEGV, signal.SIGABRT, signal.SIGBUS):
+                self.log(f"« {nom} » a planté ({signal.Signals(-code).name}) : plantage dans du "
+                         "code C (bibliothèque caméra xiAPI, libusb, pilote série…). La pile Python "
+                         "du crash est juste au-dessus (« Fatal Python error »). Si les caméras sont en "
+                         "cause : « Libérer les caméras », attendre quelques secondes, ou les "
+                         "débrancher/rebrancher.", "erreur")
             self.lbl_proc.configure(text="Aucune tâche en cours")
             self.btn_interrompre.configure(state="disabled")
             if sur_fin:
@@ -186,11 +192,50 @@ class Application(Formulaire, tk.Tk):
     # ------------------------------------------------------------------ caméras
     SCRIPTS = ("lancer_essai.py", "lancer_calibration.py", "outils_machine.py")
 
+    # fabricants USB du banc : Ximea (caméras) et FTDI (FT232R du déclenchement)
+    FABRICANTS_USB = {"20f7": "caméra Ximea", "0403": "FT232R"}
+
+    @staticmethod
+    def _peripheriques_usb():
+        """{'/dev/bus/usb/BBB/DDD': fabricant} pour les caméras et le FT232R branchés."""
+        out = {}
+        for d in Path("/sys/bus/usb/devices").glob("*"):
+            try:
+                vendeur = (d / "idVendor").read_text().strip()
+                if vendeur in Application.FABRICANTS_USB:
+                    bus = int((d / "busnum").read_text())
+                    dev = int((d / "devnum").read_text())
+                    out[f"/dev/bus/usb/{bus:03d}/{dev:03d}"] = Application.FABRICANTS_USB[vendeur]
+            except (OSError, ValueError):
+                pass
+        return out
+
+    @staticmethod
+    def _tient_les_cameras(pid, usb):
+        """Vrai si le processus a chargé la bibliothèque Ximea (libm3api / xiapi) ou a
+        ouvert une caméra ou le FT232R : c'est lui qui les garde, quel que soit son
+        nom (sous-processus crappy, ancien script lancé dans un terminal…)."""
+        proc = Path(f"/proc/{pid}")
+        try:
+            maps = (proc / "maps").read_text(errors="ignore")
+            if "libm3api" in maps or "xiapi" in maps.lower():
+                return True
+            for fd in (proc / "fd").iterdir():
+                if os.readlink(fd) in usb:
+                    return True
+        except OSError:          # processus fini, ou d'un autre utilisateur
+            pass
+        return False
+
     def processus_restants(self):
-        """Processus laissés par un essai, une calibration ou un aperçu précédent
-        (ils gardent les caméras ouvertes : la caméra ne répond plus ensuite).
-        Seuls sont retenus les Python qui exécutent nos scripts, et xiCamTool."""
-        actifs = {self.proc.p.pid} if self.proc is not None and self.proc.vivant() else set()
+        """Processus qui gardent les caméras (essai, calibration ou aperçu précédent,
+        sous-processus crappy, xiCamTool, script lancé à la main), hors interface et
+        hors tâche en cours. C'est ce qu'un pkill arrêtait."""
+        actifs = set()
+        if self.proc is not None and self.proc.vivant():
+            actifs.add(self.proc.p.pid)
+        moi = os.getpid()
+        usb = self._peripheriques_usb()
         restes = {}
         r = subprocess.run(["ps", "-eo", "pid=,pgid=,args="], capture_output=True, text=True)
         for ligne in r.stdout.splitlines():
@@ -198,22 +243,31 @@ class Application(Formulaire, tk.Tk):
             if len(champs) < 3:
                 continue
             pid, pgid, cmd = int(champs[0]), int(champs[1]), champs[2]
+            if pid == moi or pgid in actifs or pgid == os.getpgid(moi):
+                continue
             args = cmd.split()
             exe = Path(args[0]).name
             nos_scripts = exe.startswith("python") and any(
                 Path(x).name in self.SCRIPTS and Path(x).parent.name == "interface_gonflement"
                 for x in args[1:4])
-            if (nos_scripts or exe == "xiCamTool") and pid != os.getpid() \
-                    and pgid not in actifs:
+            if nos_scripts or exe.startswith("xiCamTool") or self._tient_les_cameras(pid, usb):
                 restes[pid] = cmd
         return restes
 
     def liberer_cameras(self, restes=None):
-        """Arrête les processus restants (SIGTERM, puis SIGKILL 2 s après)."""
-        restes = self.processus_restants() if restes is None else restes
-        if not restes:
-            self.log("Aucun processus resté ouvert : les caméras sont libres", "info")
-            return
+        """Arrête les processus qui gardent les caméras (SIGTERM, puis SIGKILL 2 s après)."""
+        if restes is None:          # bouton « Libérer les caméras » : on montre avant d'arrêter
+            restes = self.processus_restants()
+            if not restes:
+                self.log("Aucun processus ne garde les caméras ni le FT232R : ils sont libres. "
+                         "Si une caméra ne répond toujours pas, la débrancher et la rebrancher.",
+                         "info")
+                return
+            if not messagebox.askyesno("Libérer les caméras", "Processus qui gardent les "
+                                       "caméras ou le FT232R :\n\n" + "\n".join(
+                                           f"{p} : {c[:80]}" for p, c in restes.items())
+                                       + "\n\nLes arrêter ?"):
+                return
         for pid, cmd in restes.items():
             self.log(f"Arrêt du processus resté ouvert {pid} : {cmd[:90]}", "alerte")
             try:
@@ -253,6 +307,7 @@ class Application(Formulaire, tk.Tk):
         def tache():
             try:
                 r = subprocess.run(cmd, capture_output=True, text=True, timeout=20,
+                                   env={**os.environ, "PYTHONFAULTHANDLER": "1"},
                                    cwd=str(self.ICI.parent), start_new_session=True)
                 sortie, code = (r.stdout + r.stderr).strip(), r.returncode
             except subprocess.TimeoutExpired as e:
@@ -267,7 +322,8 @@ class Application(Formulaire, tk.Tk):
             for l in sortie.splitlines():
                 self.log(l)
             if code == 0:
-                return suite()
+                # laisse au pilote USB le temps de rendre les caméras avant de les rouvrir
+                return self.after(2000, suite)
             conseil = ("Une caméra ne répond pas. Le plus souvent : un programme la garde "
                        "ouverte (xiCamTool, essai précédent : bouton « Libérer les caméras »), "
                        "ou elle est dans un état USB bloqué : la débrancher et la rebrancher. "
@@ -409,8 +465,14 @@ class Application(Formulaire, tk.Tk):
         self.destroy()
 
 
-def main():
-    Application().mainloop()
+def main(plantage_precedent=""):
+    app = Application()
+    if plantage_precedent:
+        app.log("Le lancement précédent de l'interface a planté. Pile Python au moment du "
+                "crash (plantages.log) :", "erreur")
+        for ligne in plantage_precedent.splitlines()[-40:]:
+            app.log("   " + ligne, "erreur")
+    app.mainloop()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,80 @@
+{
+  "materiel": {
+    "simulation": false,
+    "theme": "sombre",
+    "port_alicat": "/dev/ttyUSB1",
+    "baud_alicat": 9600,
+    "pression_relative": false,
+    "pleine_echelle": 1000.0,
+    "port_imprimante": "/dev/ttyACM0",
+    "url_ftdi": "ftdi://ftdi:232:FTU7DIHC/1",
+    "sn_droite": "14482450",
+    "sn_gauche": "32482550",
+    "expo_droite": 41389,
+    "expo_gauche": 31740,
+    "taille_image": 2048,
+    "dossier_racine": "C:\\Users\\jazzo\\Desktop\\doctorat\\Expériences",
+    "port_udp_donnees": 50555,
+    "port_udp_commandes": 50556
+  },
+  "essai": {
+    "echantillon": "Pro_Grip",
+    "dossier": "C:\\Users\\jazzo\\Desktop\\doctorat\\code\\Données_Gonflement\\Données\\2026_10_23",
+    "mode": "debit",
+    "freq_cam": 2.5,
+    "sauver_images": true,
+    "graphers_crappy": false,
+    "pression_max": 1500.0,
+    "duree_max": 1800.0,
+    "debit_max": 200.0,
+    "vitesse_cmd_max": 100.0,
+    "arret_auto": true,
+    "debit": {
+      "consigne": 13.2,
+      "duree_rampe": 20.0,
+      "attente": 2.0,
+      "duree_palier": 0.0
+    },
+    "pression": {
+      "consigne": 1111.0,
+      "vitesse": 1.4,
+      "duree_palier": 0.0,
+      "kp": 5.0,
+      "ki": 0.5
+    },
+    "deformation": {
+      "source": "3D",
+      "composante": "exx",
+      "camera": "moyenne",
+      "eps_max": 15.0,
+      "vitesse": 0.02,
+      "duree_palier": 0.0,
+      "kp": 20.0,
+      "ki": 2.0,
+      "kff": 0.0,
+      "timeout_mesure": 5.0,
+      "methode_3d": "Zernike",
+      "pform": 4,
+      "fichier_constantes": "",
+      "rotation_droite": true
+    }
+  },
+  "calibration": {
+    "z_depart": 70.0,
+    "pas_z": 2.0,
+    "z_fin": 32.0,
+    "nom_essai": "Mvt_Rigide",
+    "temps_plan": 0.0,
+    "expo_droite": 41389,
+    "expo_gauche": 28757,
+    "graphe_hauteur": true,
+    "z_reglage": 70.0,
+    "date": "2026_10_27",
+    "dossier_images": "C:\\Users\\jazzo\\Desktop\\doctorat\\code\\Données_Gonflement\\Données\\2026_10_23",
+    "methode": "Lagrange",
+    "pform": "4",
+    "iterations": 10,
+    "deplacer_metadata": false,
+    "afficher_3d": true
+  }
+}

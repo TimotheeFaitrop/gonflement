@@ -1,6 +1,6 @@
 """Onglet Calibration : reprend les programmes du dépôt.
 
-  1. Réglage       reglage_hauteur_init.py / _debut_exp.py / _reinit.py
+  1. Réglage       test hauteur 20 -> 120 mm, début d'essai (Z = 70), origine (G92), photos
   2. Essai, plans  champs de Pycaso/calibration_gui.py (date, dossier, z départ, pas, nb plans)
   3. Acquisition   calib_crappy_V2.py (expositions 41389 / 28757 µs, déclenchement matériel)
   4. Méthode       Pycaso/calibration_gui.py (Lagrange 4 / 10 it., Soloff 332 / 8, Zernike 6 / 9)
@@ -9,7 +9,7 @@
 import time
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 
 try:
     from . import reglages as rg
@@ -46,40 +46,101 @@ class OngletCalibration(ttk.Frame):
         a = self.app
         port = lambda: a.v("materiel.port_imprimante").get()  # noqa: E731
         b = ttk.Frame(f)
-        b.grid(row=0, column=0, columnspan=4, sticky="w", padx=4, pady=4)
-        ttk.Button(b, text="Réglage initial (aperçu puis Z 20 → 120)",
-                   command=self.reglage_init).pack(side="left", padx=3)
+        b.grid(row=0, column=0, columnspan=5, sticky="w", padx=4, pady=4)
+        ttk.Button(b, text="Test hauteur (Z 20 → 120)", command=self.test_hauteur
+                   ).pack(side="left", padx=3)
         ttk.Button(b, text="Début d'essai (Z = 70)", command=lambda: a.outil(
             "Plateau en début d'essai", "aller_z", port(), 70, "--origine")).pack(side="left", padx=3)
-        ttk.Button(b, text="Réinitialiser (Z = 120)", command=lambda: a.outil(
-            "Plateau réinitialisé", "aller_z", port(), 120, "--origine")).pack(side="left", padx=3)
-        a.note(f, 1, "Comme reglage_hauteur_init.py : origine, aperçu des deux caméras (fermer "
-                     "la fenêtre une fois la mire visible), puis Z = 20 et Z = 120 mm pour "
-                     "vérifier la netteté.", 620)
+        a.note(f, 1, "Test hauteur : aperçu des deux caméras avec leur netteté en direct ; origine "
+                     "puis Z = 20 mm, Espace pour passer à Z = 120 mm (et revenir), q pour fermer. "
+                     "La netteté de chaque hauteur est notée dans la console.", 620)
         b = ttk.Frame(f)
-        b.grid(row=2, column=0, columnspan=4, sticky="w", padx=4, pady=4)
-        ttk.Button(b, text="Changer Origine Z", command=lambda: a.outil(
-            "Origine Z", "origine", port())).pack(side="left", padx=3)
-        ttk.Button(b, text="Aperçu seul", command=lambda: self._apercu("apercu")
-                   ).pack(side="left", padx=3)
+        b.grid(row=2, column=0, columnspan=5, sticky="w", padx=4, pady=4)
+        ttk.Button(b, text="Changer origine Z", command=self.changer_origine).pack(side="left", padx=3)
+        ttk.Button(b, text="Aperçu", command=self.apercu).pack(side="left", padx=3)
+        ttk.Button(b, text="Prendre une photo", command=self.photo).pack(side="left", padx=3)
         ttk.Button(b, text="Tester les caméras", command=lambda: a.outil(
             "Test caméras", "test_cameras", a.v("materiel.sn_gauche").get(),
             a.v("materiel.sn_droite").get())).pack(side="left", padx=3)
         a.champ(f, 3, "Aller à Z", "calibration.z_reglage", "mm")
         self.origine_avant = tk.BooleanVar(value=True)
-        ttk.Checkbutton(f, text="origine avant", variable=self.origine_avant
+        ttk.Checkbutton(f, text="origine avant (G28)", variable=self.origine_avant
                         ).grid(row=3, column=3, padx=6, sticky="w")
         ttk.Button(f, text="Aller", command=self.aller_z).grid(row=3, column=4, padx=4)
 
-    def _apercu(self, action):
+    def test_hauteur(self):
         a = self.app
-        extra = [a.v("materiel.port_imprimante").get()] if action == "reglage_init" else []
-        a.outil("Aperçu caméras", action, a.v("materiel.sn_gauche").get(),
-                a.v("materiel.sn_droite").get(), a.v("calibration.expo_gauche").get(),
-                a.v("calibration.expo_droite").get(), *extra)
+        if not a.sauver_reglages():
+            return
+        if a.reglages["materiel"]["simulation"]:
+            return a.log("[simulation] Test hauteur : pas de caméra ni d'imprimante", "alerte")
+        a.preparer_cameras(lambda: a.lancer(
+            "Test hauteur", [a.python(), "-u", str(a.ICI / "outils_machine.py"), "test_hauteur",
+                             a.v("materiel.sn_gauche").get(), a.v("materiel.sn_droite").get(),
+                             a.v("calibration.expo_gauche").get(),
+                             a.v("calibration.expo_droite").get(),
+                             a.v("materiel.port_imprimante").get()]))
 
-    def reglage_init(self):
-        self._apercu("reglage_init")
+    def apercu(self):
+        a = self.app
+        a.outil("Aperçu caméras", "apercu", a.v("materiel.sn_gauche").get(),
+                a.v("materiel.sn_droite").get(), a.v("calibration.expo_gauche").get(),
+                a.v("calibration.expo_droite").get())
+
+    def changer_origine(self):
+        """G92 : la position actuelle du plateau prend la valeur saisie."""
+        z = simpledialog.askfloat(
+            "Changer l'origine Z",
+            "Valeur à donner à la position ACTUELLE du plateau (mm) :\n"
+            "(0 = le plateau est à l'origine ici)\n\n"
+            "Attention : une prise d'origine (G28 : « origine avant », Test hauteur, "
+            "Début d'essai, acquisition) ou un redémarrage de l'imprimante revient à "
+            "l'origine de la machine.", initialvalue=0.0, parent=self)
+        if z is not None:
+            self.app.outil(f"Origine Z = {z:g} à la position actuelle", "changer_origine",
+                           self.app.v("materiel.port_imprimante").get(), z)
+
+    def photo(self):
+        """Une photo par caméra, dans <racine>/<date>/<nom de l'essai>/Photos."""
+        a = self.app
+        if not a.sauver_reglages():
+            return
+        if a.reglages["materiel"]["simulation"]:
+            return a.log("[simulation] Prendre une photo : pas de caméra", "alerte")
+        dossier = a.chemin(self._chemin_auto()).parent / "Photos"
+        apercu = []
+
+        def sur_ligne(l):
+            if l.startswith("APERCU="):
+                apercu.append(l.split("=", 1)[1])
+
+        def fin(code):
+            if apercu:
+                self._montrer_photo(apercu[-1])
+
+        a.preparer_cameras(lambda: a.lancer(
+            "Photo des caméras", [a.python(), "-u", str(a.ICI / "outils_machine.py"), "photo",
+                                  a.v("materiel.sn_gauche").get(), a.v("materiel.sn_droite").get(),
+                                  a.v("calibration.expo_gauche").get(),
+                                  a.v("calibration.expo_droite").get(), str(dossier)],
+            sur_ligne=sur_ligne, sur_fin=fin))
+
+    def _montrer_photo(self, png):
+        fen = tk.Toplevel(self)
+        fen.title(f"Photos — {Path(png).parent}")
+        fen.configure(bg=self.app.P["fond"])
+        try:
+            img = tk.PhotoImage(file=png)
+        except tk.TclError as e:
+            fen.destroy()
+            return self.app.log(f"Aperçu illisible : {e}", "erreur")
+        lbl = tk.Label(fen, image=img, bg=self.app.P["fond"])
+        lbl.image = img
+        lbl.pack(padx=8, pady=8)
+        ttk.Label(fen, text=f"TIFF pleine résolution dans {Path(png).parent}",
+                  style="Petit.TLabel").pack(pady=(0, 6))
+        ttk.Button(fen, text="Ouvrir le dossier", command=lambda: self.app.ouvrir(Path(png).parent)
+                   ).pack(pady=(0, 8))
 
     def aller_z(self):
         z = self.app.nombre("calibration.z_reglage")
@@ -237,8 +298,8 @@ class OngletCalibration(ttk.Frame):
         ttk.Label(f, text="Itérations").grid(row=2, column=0, sticky="w", padx=8, pady=3)
         ttk.Spinbox(f, from_=1, to=12, textvariable=a.v("calibration.iterations"), width=6
                     ).grid(row=2, column=1, sticky="w", padx=4, pady=3)
-        a.case(f, 3, "Déplacer les metadata.csv vers le dossier parent",
-               "calibration.deplacer_metadata")
+        a.note(f, 3, "Les metadata.csv sont sortis des dossiers caméra avant chaque calcul "
+                     "(Pycaso les prendrait pour des images).")
         a.case(f, 4, "Afficher le nuage 3D à la fin", "calibration.afficher_3d")
         a.note(f, 5, f"Mire ChArUco : {NCX} × {NCY} carrés de {SQR} mm")
         b = ttk.Frame(f)
@@ -270,8 +331,7 @@ class OngletCalibration(ttk.Frame):
         except ValueError:
             return messagebox.showerror("Erreur", "Date attendue au format AAAA_MM_JJ")
         d = a.chemin(a.v("calibration.dossier_images").get().strip() or ".")
-        if not d.is_dir() and not messagebox.askyesno(
-                "Dossier introuvable", f"{d} n'existe pas.\nContinuer quand même ?"):
+        if not self._verifier_images(d):
             return
         fichier = a.ecrire_config("derniere_config_calibration.json")
         if not fichier:
@@ -281,14 +341,92 @@ class OngletCalibration(ttk.Frame):
                "Lagrange": f"Lpform_{c['pform']}/L_constants.npy"}.get(c["methode"])
         attendu = d.parent / "results_calib" / nom if nom else None
 
-        def fin(code):   # le résultat devient la calibration du pilotage 3D
+        figures = []
+
+        def sur_ligne(l):
+            if l.startswith("FIGURE="):
+                figures.append(l.split("=", 1)[1])
+
+        def fin(code):   # figures de résultat, et la calibration devient celle du pilotage 3D
+            if figures:
+                self._montrer_figures(figures, d.parent / "results_calib")
             if code == 0 and attendu is not None and attendu.is_file():
                 a.v("essai.deformation.fichier_constantes").set(str(attendu))
                 a.v("essai.deformation.methode_3d").set(c["methode"])
                 a.log(f"Calibration retenue pour le pilotage 3D : {attendu}", "info")
         a.lancer(f"Calibration {c['methode']}",
                  [a.python(), "-u", str(a.ICI / "lancer_calibration.py"), "calcul", str(fichier)],
-                 sur_fin=fin)
+                 sur_fin=fin, sur_ligne=sur_ligne)
+
+    def _montrer_figures(self, figures, dossier):
+        """Fenêtre avec le nuage 3D de la mire et l'erreur de rétroprojection."""
+        fen = tk.Toplevel(self)
+        fen.title(f"Résultats de calibration — {dossier}")
+        fen.configure(bg=self.app.P["fond"])
+        ligne = tk.Frame(fen, bg=self.app.P["fond"])
+        ligne.pack(padx=8, pady=8)
+        for f in figures:
+            try:
+                img = tk.PhotoImage(file=f)
+            except tk.TclError:
+                continue
+            while img.width() > 700:            # réduit les grandes figures
+                img = img.subsample(2)
+            cadre = tk.Frame(ligne, bg=self.app.P["fond"])
+            cadre.pack(side="left", padx=4)
+            lbl = tk.Label(cadre, image=img, bg="white")
+            lbl.image = img
+            lbl.pack()
+            ttk.Label(cadre, text=Path(f).name, style="Petit.TLabel").pack()
+        ttk.Button(fen, text="Ouvrir le dossier des résultats",
+                   command=lambda: self.app.ouvrir(dossier)).pack(pady=(0, 8))
+
+    @staticmethod
+    def _compter(d):
+        ext = (".tif", ".tiff", ".png", ".bmp", ".jpg", ".jpeg")
+        return [len([p for p in (d / f"video_extenso_{c}").glob("*") if p.suffix.lower() in ext])
+                for c in ("left", "right")]
+
+    def _verifier_images(self, d):
+        """Avant le calcul : le dossier contient-il des images, autant que de plans ?"""
+        a = self.app
+        n_g, n_d = self._compter(d)
+        if not n_g or not n_d:
+            # images ailleurs ? (Mesure_00001… d'une autre acquisition du même essai)
+            voisins = sorted((p for p in d.parent.glob("Mesure*") if p.is_dir() and p != d
+                              and min(self._compter(p)) > 0), key=lambda p: p.stat().st_mtime)
+            texte = (f"Aucune image dans\n{d}\n(gauche {n_g}, droite {n_d}).")
+            if voisins and messagebox.askyesno("Aucune image", texte + "\n\nUtiliser le dossier "
+                                               f"le plus récent qui en contient :\n{voisins[-1]} ?"):
+                a.v("calibration.dossier_images").set(str(voisins[-1]))
+                return self._verifier_images(voisins[-1])
+            if not voisins:
+                messagebox.showerror("Aucune image", texte + "\n\nChoisir le dossier Mesure de "
+                                     "l'acquisition dans « Images pour le calcul ».")
+            return False
+        try:
+            n_z = len(rg.zl(a.collecter()["calibration"]))
+        except ValueError as e:
+            return messagebox.showerror("Plans z", str(e))
+        if n_g == n_d == n_z:
+            a.log(f"Calcul sur {n_g} paires d'images ({d})", "info")
+            return True
+        fz = d / "z_list.json"
+        if fz.exists():         # hauteurs notées par l'acquisition
+            import json
+            z = json.loads(fz.read_text())
+            if len(z) == n_g == n_d and messagebox.askyesno("Plans z", (
+                    f"{n_g} images par caméra mais {n_z} plans dans les champs.\n\n"
+                    f"L'acquisition de ce dossier a été faite de {z[0]} à {z[-1]} mm par pas de "
+                    f"{abs(z[1] - z[0]) if len(z) > 1 else 0:g} mm. Utiliser ces hauteurs ?")):
+                a.v("calibration.z_depart").set(str(z[0]))
+                a.v("calibration.z_fin").set(str(z[-1]))
+                a.v("calibration.pas_z").set(str(abs(z[1] - z[0]) if len(z) > 1 else 1))
+                return True
+        messagebox.showerror("Plans z", f"Images : gauche {n_g}, droite {n_d}, mais {n_z} plans.\n"
+                             "Pycaso associe l'image n à la hauteur n : corriger Z départ / Z fin / "
+                             "pas, ou le dossier.")
+        return False
 
     def ouvrir_resultats(self):
         d = self.app.v("calibration.dossier_images").get().strip()

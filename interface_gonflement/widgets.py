@@ -29,7 +29,9 @@ class Processus:
         self.p = subprocess.Popen(
             cmd, cwd=str(ICI.parent), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL, text=True, bufsize=1, start_new_session=True,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"})
+            # PYTHONFAULTHANDLER : en cas de « Segmentation fault » (xiAPI, libusb…),
+            # la pile Python du crash s'affiche dans la console de l'interface
+            env={**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONFAULTHANDLER": "1"})
         threading.Thread(target=self._lire, daemon=True).start()
 
     def _lire(self):
@@ -57,9 +59,11 @@ class Processus:
             return True
         if self.t_mort is None:
             self.t_mort = time.monotonic()      # laisse arriver les dernières lignes
-        elif time.monotonic() - self.t_mort > 1.5:
-            self.signal(signal.SIGTERM)          # restes du groupe de processus
-            threading.Timer(3, self.signal, (signal.SIGKILL,)).start()
+        elif time.monotonic() - self.t_mort > 5:
+            # restes du groupe (fenêtres, caméras) : on leur laisse le temps de fermer
+            # proprement les caméras, un kill pendant la fermeture les laisse bloquées
+            self.signal(signal.SIGTERM)
+            threading.Timer(6, self.signal, (signal.SIGKILL,)).start()
             return self._terminer()
         return True
 

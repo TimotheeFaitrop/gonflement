@@ -65,9 +65,12 @@ consigne, mesure, commande, état) + `parametres_essai.json`.
 
 Mêmes paramètres et valeurs par défaut que les programmes du dépôt :
 
-1. **Réglage** (`reglage_hauteur_*.py`) : réglage initial (origine, aperçu des
-   caméras, puis Z = 20 et 120 mm), début d'essai (Z = 70), réinitialiser
-   (Z = 120), origine seule, aperçu seul, test des caméras, aller à un Z.
+1. **Réglage** : test hauteur (aperçu des deux caméras avec leur netteté en
+   direct ; origine, Z = 20 mm, Espace pour Z = 120 mm et retour), début d'essai
+   (Z = 70), changer l'origine Z (G92 : la position actuelle prend la valeur
+   saisie, jusqu'à la prochaine prise d'origine G28), aperçu des deux caméras,
+   **prendre une photo** avec chaque caméra (TIFF pleine résolution dans
+   `<racine>/<date>/<nom>/Photos`, aperçu affiché), test des caméras, aller à un Z.
 2. **Essai et plans z** : dossier racine (choisi en parcourant le PC), date
    (aujourd'hui), nom de l'essai (`Mvt_Rigide` comme `calib_crappy_V2`). Les images
    vont dans `<racine>/<date>/<nom>/Mesure` (puis `Mesure_00001`… s'il est déjà
@@ -83,6 +86,13 @@ Mêmes paramètres et valeurs par défaut que les programmes du dépôt :
    fin. Document `hauteurs_calibration.txt` (et `.csv`) écrit à chaque
    acquisition ; bouton pour le générer sans acquisition. En simulation, des
    images de synthèse de la mire ChArUco sont créées (calculables par Pycaso).
+   **Calcul** : avant Pycaso, les `metadata.csv` sont sortis des dossiers caméra,
+   l'ancienne détection mise en cache est effacée si les images ont changé, le
+   format de la mire ChArUco (ancien « legacy » ou nouveau) est détecté sur les
+   images et imposé à Pycaso, et les coins sont mis au format attendu. La console
+   donne les coins détectés par image ; à la fin, une fenêtre affiche le nuage 3D
+   et l'erreur de rétroprojection (aussi en PNG dans `results_calib/`).
+   Pycaso exige NumPy < 2.5.
 4. **Méthode** (`Pycaso/calibration_gui.py`) : Lagrange degré 4 / 10 itérations,
    Soloff 332 / 8, Zernike ordre 6 / 9 ; changer de méthode remet ces valeurs.
    Options metadata et nuage 3D, mire 12 × 12 carrés de 7,5 mm. Un résultat
@@ -91,8 +101,9 @@ Mêmes paramètres et valeurs par défaut que les programmes du dépôt :
 ## Caméras : une seule répond
 
 Avant chaque essai ou acquisition réels, l'interface vérifie la mémoire USB,
-cherche les processus restés ouverts (essai, aperçu, xiCamTool) qui gardent une
-caméra, propose de les arrêter, puis ouvre chaque caméra et lit une image dans un
+cherche les processus qui gardent une caméra ou le FT232R (bibliothèque Ximea
+chargée ou périphérique USB ouvert : sous-processus crappy, aperçu, xiCamTool,
+ancien script lancé dans un terminal), propose de les arrêter, puis ouvre chaque caméra et lit une image dans un
 processus séparé coupé au bout de 20 s. Si une caméra ne répond pas, elle est
 nommée et l'essai n'est pas lancé (sauf choix contraire). Toutes les lectures
 d'image ont un délai d'attente borné, l'aperçu reste fermable si une caméra ne
