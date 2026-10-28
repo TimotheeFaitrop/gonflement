@@ -10,6 +10,7 @@ Les valeurs proposées au départ sont les valeurs par défaut de PressionUz.__i
 import os
 import re
 import tkinter as tk
+from pathlib import Path
 from tkinter import ttk, messagebox, filedialog
 
 from Pycaso.deformation_class import Deformation
@@ -76,6 +77,7 @@ class PressionGUI:
     ]
     SENS = {"auto (dôme vers le haut)": None, "inverser": True, "garder": False}
     SEPARATEURS = {"virgule": ",", "point-virgule": ";", "tabulation": "\t", "espaces": ""}
+    INTERPOLATIONS = {"linéaire (entre les 2 mesures qui encadrent)": "lineaire", "mesure la plus proche": "proche"}
     PAD = _PAD
 
     def __init__(self):
@@ -89,13 +91,15 @@ class PressionGUI:
             "date": tk.StringVar(value=p.date),
             "dossier_essai": tk.StringVar(value=p.dossier_essai),
             "source": tk.StringVar(),
-            "fichier_pression": tk.StringVar(value=p.fichier_pression),
+            "fichier_pression": tk.StringVar(value=str(Path(p.dossier_essai) / p.fichier_pression)),
             "colonne_temps": tk.StringVar(value=str(p.colonne_temps)),
             "colonne_pression": tk.StringVar(value=str(p.colonne_pression)),
             "separateur": tk.StringVar(value=next(k for k, v in self.SEPARATEURS.items() if v == p.separateur)),
             "lignes_entete": tk.StringVar(value=str(p.lignes_entete)),
             "pression_relative": tk.BooleanVar(value=p.pression_relative),
             "unite_pression": tk.StringVar(value=p.unite_pression),
+            "decalage_temps": tk.StringVar(value=f"{p.decalage_temps:g}"),
+            "interpolation": tk.StringVar(value=next(k for k, v in self.INTERPOLATIONS.items() if v == p.interpolation)),
             "reference_deplacement": tk.StringVar(value=str(p.reference_deplacement)),
             "centile": tk.StringVar(value=f"{p.centile:g}"),
             "sens_z": tk.StringVar(value=next(k for k, v in self.SENS.items() if v == p.inverser_z)),
@@ -105,10 +109,13 @@ class PressionGUI:
             self.v[nom] = tk.BooleanVar(value=bool(getattr(p, nom)))
         self._construire()
         self._chemin_auto = self.v["dossier_essai"].get()
+        self._fichier_auto = self.v["fichier_pression"].get()
         self.v["date"].trace_add("write", self._suivre_date)
+        self.v["dossier_essai"].trace_add("write", self._suivre_essai)
         for k in ("date", "dossier_essai"):
             self.v[k].trace_add("write", self._maj_sources)
-        for k in ("source", "fichier_pression", "colonne_temps", "colonne_pression", "separateur", "lignes_entete"):
+        for k in ("source", "fichier_pression", "colonne_temps", "colonne_pression", "separateur", "lignes_entete",
+                  "decalage_temps"):
             self.v[k].trace_add("write", self._maj)
         self._maj_sources()
 
@@ -154,7 +161,6 @@ class PressionGUI:
         l.grid(row=0, column=1, columnspan=2, sticky="w", **pad)
         ttk.Entry(l, textvariable=self.v["fichier_pression"], width=52).grid(row=0, column=0)
         ttk.Button(l, text="…", width=3, command=self._parcourir_fichier).grid(row=0, column=1, padx=(4, 0))
-        ttk.Label(l, text="(relatif au dossier de l'essai)", foreground="gray").grid(row=0, column=2, padx=(6, 0))
         lc = ttk.Frame(f)
         lc.grid(row=1, column=0, columnspan=3, sticky="w", **pad)
         for j, (cle, lib, w) in enumerate((("colonne_temps", "colonne du temps", 5),
@@ -171,8 +177,16 @@ class PressionGUI:
         lu.grid(row=2, column=2, sticky="w", **pad)
         ttk.Label(lu, text="unité").grid(row=0, column=0, padx=(0, 4))
         ttk.Entry(lu, textvariable=self.v["unite_pression"], width=8).grid(row=0, column=1)
+        lt = ttk.Frame(f)
+        lt.grid(row=3, column=0, columnspan=3, sticky="w", **pad)
+        ttk.Label(lt, text="décalage des horloges (s)").grid(row=0, column=0, padx=(0, 4))
+        ttk.Entry(lt, textvariable=self.v["decalage_temps"], width=8).grid(row=0, column=1)
+        ttk.Label(lt, text="temps capteur = temps image + décalage", foreground="gray").grid(row=0, column=2, padx=(6, 14))
+        ttk.Label(lt, text="pression à chaque image").grid(row=1, column=0, padx=(0, 4), pady=(4, 0), sticky="w")
+        ttk.Combobox(lt, textvariable=self.v["interpolation"], state="readonly", values=list(self.INTERPOLATIONS),
+                     width=40).grid(row=1, column=1, columnspan=2, sticky="w", pady=(4, 0))
         self.lbl_pression = ttk.Label(f, wraplength=640, justify="left")
-        self.lbl_pression.grid(row=3, column=0, columnspan=3, sticky="w", **pad)
+        self.lbl_pression.grid(row=4, column=0, columnspan=3, sticky="w", **pad)
 
         # --- Uz max ---
         f = self._bloc("Uz max", 2)
@@ -207,15 +221,22 @@ class PressionGUI:
     def _parcourir(self):
         _parcourir_essai(self.root, self.v["dossier_essai"], Detect3D.DOSSIER_PARCOURIR)
 
+    def _suivre_essai(self, *_):
+        """Le fichier de pression suit le dossier de l'essai, sauf s'il a été modifié à la main."""
+        if self.v["fichier_pression"].get() == self._fichier_auto:
+            nom = Path(self._fichier_auto).name or "data_ali.txt"
+            self._fichier_auto = str(Path(self.v["dossier_essai"].get().strip() or ".") / nom)
+            self.v["fichier_pression"].set(self._fichier_auto)
+
     def _parcourir_fichier(self):
-        essai = self.v["dossier_essai"].get().strip() or "."
-        f = filedialog.askopenfilename(initialdir=_dossier_depart(essai), parent=self.root,
-                                       title="Fichier du capteur de pression",
+        actuel = Path(self.v["fichier_pression"].get().strip())
+        depart = _dossier_depart(str(actuel.parent), self.v["dossier_essai"].get().strip() or ".")
+        f = filedialog.askopenfilename(initialdir=depart, parent=self.root, title="Fichier du capteur de pression",
                                        filetypes=[("Texte", "*.txt *.csv *.dat"), ("Tous", "*")])
         if f:
             try:
-                rel = os.path.relpath(f, essai)
-            except ValueError:
+                rel = os.path.relpath(f)
+            except ValueError:                 # Windows : autre lecteur que le dossier d'exécution
                 rel = ".."
             self.v["fichier_pression"].set(f if rel.startswith("..") else rel)
 
@@ -276,7 +297,11 @@ class PressionGUI:
             t, pr = p.lire_pression()
             texte = f"✔ {len(t)} mesures, temps {t.min():.3g} à {t.max():.3g} s, pression {pr.min():.4g} à {pr.max():.4g}"
             couleur = _VERT
-            if self.plage_images and (self.plage_images[0] < t.min() or self.plage_images[1] > t.max()):
+            try:
+                dec = float(self.v["decalage_temps"].get().replace(",", "."))
+            except ValueError:
+                dec = 0.0
+            if self.plage_images and (self.plage_images[0] + dec < t.min() or self.plage_images[1] + dec > t.max()):
                 texte += "  ⚠ des images sont hors de la plage du capteur (pression NaN)"
                 couleur = _ORANGE
             self.lbl_pression.configure(text=texte, foreground=couleur)
@@ -308,6 +333,7 @@ class PressionGUI:
         ref = self._nombre("reference_deplacement", "Image de référence", erreurs, int)
         centile = self._nombre("centile", "Centile", erreurs, float, 50, 100, defaut=100.0)
         seuil = self._nombre("seuil_aberrants", "Seuil des aberrants", erreurs, float, 0, defaut=2.0)
+        decalage = self._nombre("decalage_temps", "Décalage des horloges", erreurs, float, defaut=0.0)
         p = self._courant()
         if not (p.dossier_source / "X3d.txt").is_file():
             erreurs.append("Aucune reconstruction choisie")
@@ -328,6 +354,8 @@ class PressionGUI:
                                  separateur=self.SEPARATEURS[self.v["separateur"].get()],
                                  pression_relative=self.v["pression_relative"].get(),
                                  unite_pression=self.v["unite_pression"].get().strip() or "mbar",
+                                 decalage_temps=decalage,
+                                 interpolation=self.INTERPOLATIONS[self.v["interpolation"].get()],
                                  reference_deplacement=ref, centile=centile,
                                  inverser_z=self.SENS[self.v["sens_z"].get()], seuil_aberrants=seuil,
                                  **{nom: self.v[nom].get() for nom, _ in self.CASES})

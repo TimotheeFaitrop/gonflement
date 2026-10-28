@@ -4,8 +4,10 @@ Remplace getuzpress.py. Pour chaque image de la reconstruction :
   - Uz max = plus grand déplacement hors plan des taches (z − z de l'image de référence),
     ou un centile élevé pour ne pas dépendre d'une seule tache ;
   - temps de l'image = lu dans son nom (000012_4.567.tiff -> 4.567 s), dans video_extenso_left ;
-  - pression = interpolée linéairement au temps de l'image dans le fichier du capteur
-    (data_ali.txt : temps, pression), relative à la première mesure si demandé.
+  - pression = celle du capteur (data_ali.txt : temps, pression) au temps de l'image, interpolée
+    linéairement entre les deux mesures qui l'encadrent (ou mesure la plus proche), relative à la
+    première mesure si demandé. Si les deux horloges ne partent pas du même instant, decalage_temps
+    les recale : temps capteur = temps image + decalage_temps.
 
 Les taches sont chargées comme pour la déformation (classe Deformation) : exclusions manuelles,
 filtre des aberrants et sens de z (dôme vers le haut) y sont appliqués.
@@ -67,13 +69,16 @@ class PressionUz:
                  dossier_essai=None,        # ex. <date>/essai1 ; None = <date>/essai1
                  source=None,               # reconstruction (Lpform_4, Lpform_4_corrige...) ; None = la première
                  # --- Pression ---
-                 fichier_pression="data_ali.txt",   # relatif au dossier de l'essai, ou chemin absolu
+                 fichier_pression="data_ali.txt",   # nom seul : dans le dossier de l'essai ; sinon chemin
+                                                    # absolu ou relatif au dossier d'exécution
                  colonne_temps=0,
                  colonne_pression=1,
                  separateur=",",
                  lignes_entete=1,
                  pression_relative=True,    # pression − première mesure du capteur
                  unite_pression="mbar",
+                 decalage_temps=0.0,        # (s) temps capteur = temps image + décalage (horloges non synchrones)
+                 interpolation="lineaire",  # "lineaire" (entre les 2 mesures qui encadrent) ou "proche"
                  # --- Uz max ---
                  reference_deplacement=0,   # Uz = z − z(image de référence) ; 0 = état plat si source corrigée
                  centile=100.0,             # 100 = maximum ; 99 ou 99.5 : moins sensible à une tache isolée
@@ -98,6 +103,10 @@ class PressionUz:
         self.lignes_entete = int(lignes_entete)
         self.pression_relative = pression_relative
         self.unite_pression = unite_pression
+        self.decalage_temps = float(decalage_temps)
+        if interpolation not in ("lineaire", "proche"):
+            raise ValueError(f"interpolation : 'lineaire' ou 'proche' (pas {interpolation})")
+        self.interpolation = interpolation
         self.reference_deplacement = int(reference_deplacement)
         self.centile = float(centile)
         self.inverser_z = inverser_z
@@ -127,8 +136,9 @@ class PressionUz:
 
     @property
     def chemin_pression(self):
+        """Nom seul (data_ali.txt) : dans le dossier de l'essai ; sinon le chemin tel quel."""
         p = Path(self.fichier_pression)
-        return Path(self.dossier_essai) / p
+        return p if p.is_absolute() or p.parent != Path(".") else Path(self.dossier_essai) / p
 
     @property
     def est_corrigee(self):
@@ -160,6 +170,26 @@ class PressionUz:
         if not corrigee:
             numero = max(numero - 1, 0)
         return range(nb_lignes)[numero]
+
+    def pression_aux_temps(self, t, t_p, p_p):
+        """Pression aux temps t (NaN hors de la plage du capteur) : interpolation linéaire ou mesure la plus proche."""
+        if self.interpolation == "lineaire":
+            return np.interp(t, t_p, p_p, left=np.nan, right=np.nan)
+        res = np.full(len(t), np.nan)
+        ok = np.isfinite(t) & (t >= t_p[0]) & (t <= t_p[-1])
+        i = np.clip(np.searchsorted(t_p, t[ok]), 1, len(t_p) - 1)
+        plus_proche = np.where(np.abs(t_p[i - 1] - t[ok]) <= np.abs(t_p[i] - t[ok]), i - 1, i)
+        res[ok] = p_p[plus_proche]
+        return res
+
+    @staticmethod
+    def ecart_mesure(t, t_p):
+        """Écart (s) entre chaque temps t et la mesure du capteur la plus proche."""
+        res = np.full(len(t), np.nan)
+        ok = np.isfinite(t)
+        i = np.clip(np.searchsorted(t_p, t[ok]), 1, len(t_p) - 1)
+        res[ok] = np.minimum(np.abs(t_p[i - 1] - t[ok]), np.abs(t_p[i] - t[ok]))
+        return res
 
     # ----- point d'entrée -----
 
@@ -197,18 +227,23 @@ class PressionUz:
         numeros = np.arange(nb_lignes) + decalage
 
         t_p, p_p = self.lire_pression()
-        pression = np.interp(temps, t_p, p_p, left=np.nan, right=np.nan)
+        pression = self.pression_aux_temps(temps + self.decalage_temps, t_p, p_p)
         hors = np.isfinite(temps) & ~np.isfinite(pression)
+        ecart = self.ecart_mesure(temps + self.decalage_temps, t_p)
         if corrigee:
             pression[0] = 0.0 if self.pression_relative else np.nan      # état plat : avant la mise en pression
         print(f"{nb_photos} photos de l'essai, temps {np.nanmin(temps_photos):.3g} à {np.nanmax(temps_photos):.3g} s ; "
               f"capteur : {len(t_p)} mesures, {t_p.min():.3g} à {t_p.max():.3g} s"
               + (f" ; ⚠ {hors.sum()} image(s) hors de la plage du capteur (pression NaN)" if hors.any() else ""))
+        print(f"Pression {'interpolée linéairement' if self.interpolation == 'lineaire' else 'de la mesure la plus proche'}"
+              + (f", décalage {self.decalage_temps:+g} s" if self.decalage_temps else "")
+              + (f" ; mesure la plus proche à {np.nanmax(ecart):.3g} s au plus d'une image" if np.isfinite(ecart).any() else ""))
         print(f"Uz = z − z(image {numeros[ref]}){' (z inversé)' if d.z_inverse else ''} ; "
               f"Uz max {'= maximum' if self.centile >= 100 else f'= centile {self.centile:g}'} : "
               f"de {np.nanmin(uz_max):.3g} à {np.nanmax(uz_max):.3g} mm")
 
-        self.resultats = {"image": numeros, "temps": temps, "pression": pression, "uz_max": uz_max}
+        self.resultats = {"image": numeros, "temps": temps, "pression": pression, "uz_max": uz_max,
+                          "ecart_mesure": ecart}
         if self.enregistrer_resultats or self.enregistrer_figures:
             self.dossier_sortie.mkdir(parents=True, exist_ok=True)
         if self.enregistrer_resultats:
@@ -243,11 +278,13 @@ class PressionUz:
         if self.tracer_temps:
             ok_t = np.isfinite(r["temps"])
             fig, ax1 = plt.subplots(figsize=(9, 6), layout="constrained")
-            ax1.plot(r["temps"][ok_t], r["pression"][ok_t], "o-", ms=3, c="tab:blue")
-            ax1.set_xlabel("temps (s)"); ax1.set_ylabel(f"Pression ({self.unite_pression})", color="tab:blue")
+            l1 = ax1.plot(r["temps"][ok_t], r["pression"][ok_t], "o-", ms=3, c="tab:blue",
+                          label=f"Pression ({self.unite_pression})")
+            ax1.set_xlabel("temps (s)"); ax1.set_ylabel(f"Pression ({self.unite_pression})")
             ax2 = ax1.twinx()
-            ax2.plot(r["temps"][ok_t], r["uz_max"][ok_t], "s-", ms=3, c="tab:orange")
-            ax2.set_ylabel(f"{quoi} (mm)", color="tab:orange")
+            l2 = ax2.plot(r["temps"][ok_t], r["uz_max"][ok_t], "s-", ms=3, c="tab:orange", label=f"{quoi} (mm)")
+            ax2.set_ylabel(f"{quoi} (mm)")
+            ax1.legend(l1 + l2, [l.get_label() for l in l1 + l2], loc="best")
             ax1.set_title(f"{Path(self.dossier_essai).name} - {self.source} : pression et {quoi} au cours du temps")
             ax1.grid(alpha=0.3)
             self._finir_figure(fig, "Pression_Uz_temps.png")
