@@ -405,7 +405,7 @@ class Correction:
             ax_h.set_title(f"écart résiduel du recalage : médian {np.median(v['ecarts']):.2f} px "
                            f"(espacement des taches {v['espacement']:.1f} px)")
         if self.enregistrer_figures:
-            fig.savefig(self.dossier_figures / "appariement_plat_premiere_image.png", dpi=110)
+            fig.savefig(self.dossier_figures / "appariement_plat_premiere_image.svg", dpi=110)
         if self.afficher_figures:
             plt.show()
         plt.close(fig)

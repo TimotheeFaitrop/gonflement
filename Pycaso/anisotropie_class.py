@@ -310,7 +310,7 @@ class Anisotropie:
         ax2.set_title("Orientation du grand axe / X"); ax2.set_ylim(-90, 90)
         fig.suptitle(f"{self.source} - {self.dossier_essai}")
         nom = "-".join(map(str, numeros)) if len(numeros) <= 5 else f"{numeros[0]}..{numeros[-1]}"
-        self._finir_figure(fig, f"Aniso_pente_{nom}-{nb}.png")
+        self._finir_figure(fig, f"Aniso_pente_{nom}-{nb}.svg")
 
     def _ellipses(self, num):
         """(niveau, z, Ellipse paramètres) de l'image num."""
@@ -334,7 +334,7 @@ class Anisotropie:
         fig.colorbar(plt.cm.ScalarMappable(norm=norme, cmap=cmap), ax=ax, label="niveau (fraction de Uz max)")
         moy = np.mean(res["tableau"][:, 4]) if len(res["tableau"]) else float("nan")
         ax.set_title(f"{self.source} - image {num} / {nb - 1} - ellipses de niveau (b/a moyen {moy:.3f})")
-        self._finir_figure(fig, f"Ellipses_{num}-{nb}.png")
+        self._finir_figure(fig, f"Ellipses_{num}-{nb}.svg")
 
     def tracer_surface_3d(self, num):
         """Surface déformée (z = déplacement) avec les ellipses à leur hauteur."""
@@ -359,4 +359,4 @@ class Anisotropie:
             pass
         fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5, label="Uz (mm)")
         plt.title(f"{self.source} - image {num} / {nb - 1} - surface et ellipses de niveau")
-        self._finir_figure(fig, f"Surface_{num}-{nb}.png")
+        self._finir_figure(fig, f"Surface_{num}-{nb}.svg")

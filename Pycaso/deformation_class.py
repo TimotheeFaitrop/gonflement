@@ -91,7 +91,7 @@ class Deformation:
                                             # les déformations sont toujours calculées / image 0.
                                             # Source corrigée : 0 = état plat, 1 = état serré
                  enregistrer_champs=True,   # champs_<n>.npz : tous les champs de l'image n
-                 enregistrer_figures=True,  # figures en .png
+                 enregistrer_figures=True,  # figures en .svg
                  afficher_figures=True):    # ouvrir les figures à l'écran
         for nom, val, choix in (("interpolation", interpolation, self.INTERPOLATIONS),
                                 ("masque", masque, self.MASQUES)):
@@ -422,7 +422,7 @@ class Deformation:
         for ax in axes[len(vignettes):]:                       # cases vides de la dernière ligne
             ax.set_visible(False)
         fig.suptitle(f"{titre} - {self.source} - image {num} / {nb - 1}")
-        self._finir_figure(fig, f"{grandeur}_{num}-{nb}.png")
+        self._finir_figure(fig, f"{grandeur}_{num}-{nb}.svg")
 
     def tracer_nuage(self, num):
         """Nuage 3D des taches de l'image num, couleur = z (ou déplacement z)."""
@@ -443,4 +443,4 @@ class Deformation:
         plt.title(f"{self.source} - image {num} / {nb - 1} - {quoi} (mm)"
                   + (" - Z inversé" if self.z_inverse else ""))
         fig.colorbar(sctt, ax=ax, shrink=0.5, aspect=5)
-        self._finir_figure(fig, f"Nuage3D_{num}-{nb}.png")
+        self._finir_figure(fig, f"Nuage3D_{num}-{nb}.svg")

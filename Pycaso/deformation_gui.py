@@ -166,7 +166,7 @@ class DeformationGUI:
         ("nuage_3d", "Tracer aussi le nuage de points 3D"),
         ("nuage_deplacement", "Nuage 3D : tracer le déplacement z − z(image de référence) plutôt que z"),
         ("enregistrer_champs", "Enregistrer les champs calculés (champs_<n>.npz)"),
-        ("enregistrer_figures", "Enregistrer les figures (.png dans le dossier des résultats)"),
+        ("enregistrer_figures", "Enregistrer les figures (.svg dans le dossier des résultats)"),
         ("afficher_figures", "Afficher les figures à la fin"),
     ]
     AIDE_INTERPOLATION = {

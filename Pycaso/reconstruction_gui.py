@@ -167,7 +167,7 @@ class Detect3DGUI:
 
     CASES = [
         ("inverser_z", "Inverser l'axe Z (dôme vers le haut)"),
-        ("enregistrer_figures", "Enregistrer les figures (.png dans le dossier des résultats)"),
+        ("enregistrer_figures", "Enregistrer les figures (.svg dans le dossier des résultats)"),
         ("afficher_figures", "Afficher les figures à la fin"),
     ]
     PAD = _PAD

@@ -283,7 +283,7 @@ class DetectionSpots:
         ax[2].set_title(f"{nom} des paires retenues (limite {limite:g} {unite})")
         ax[2].legend()
         fig.tight_layout()
-        fig.savefig(f"{self.dossier}appariement.png", dpi=120)
+        fig.savefig(f"{self.dossier}appariement.svg", dpi=120)
         if self.afficher_figures:
             plt.show()
         plt.close(fig)

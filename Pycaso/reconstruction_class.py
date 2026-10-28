@@ -72,7 +72,7 @@ class Detect3D:
                  z_bleu=0.0,                # Z (mm) affiché en bleu
                  z_jaune=60.0,              # Z (mm) affiché en jaune
                  z_max=100.0,               # haut de l'échelle fixe (mm), jaune vif
-                 enregistrer_figures=True,  # enregistrer les figures en .png dans dossier_sortie
+                 enregistrer_figures=True,  # enregistrer les figures en .svg dans dossier_sortie
                  afficher_figures=True):    # ouvrir les figures à l'écran
         if methode not in self.METHODES:
             raise ValueError(f"Méthode inconnue : {methode} (choix : {', '.join(self.METHODES)})")
@@ -338,7 +338,7 @@ class Detect3D:
             cbar.set_ticks([self.z_min, self.z_bleu, self.z_jaune, self.z_max])
             cbar.set_ticklabels([f"{v:g}" for v in (self.z_min, self.z_bleu, self.z_jaune, self.z_max)])
         if self.enregistrer_figures:
-            plt.savefig(self.dossier_sortie / f"Déplacement_{num}-{derniere}.png")
+            plt.savefig(self.dossier_sortie / f"Déplacement_{num}-{derniere}.svg")
         if self.afficher_figures:
             plt.show()
         plt.close(fig)

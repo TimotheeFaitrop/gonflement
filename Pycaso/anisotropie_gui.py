@@ -167,7 +167,7 @@ class AnisotropieGUI:
         ("tracer_ellipses", "Tracer la vue de dessus (points des niveaux et ellipses)"),
         ("tracer_surface", "Tracer la surface 3D avec les ellipses"),
         ("enregistrer_resultats", "Enregistrer les ellipses (ellipses_<n>.txt)"),
-        ("enregistrer_figures", "Enregistrer les figures (.png dans le dossier des résultats)"),
+        ("enregistrer_figures", "Enregistrer les figures (.svg dans le dossier des résultats)"),
         ("afficher_figures", "Afficher les figures à la fin"),
     ]
     AIDE_INTERPOLATION = {
