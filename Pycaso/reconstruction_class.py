@@ -66,7 +66,7 @@ class Detect3D:
                  deplacement=True,          # tracer z - z(image 0) plutôt que z (axe vertical fixé à -10..90 ;
                                             # sinon axe vertical automatique)
                  inverser_z=True,           # changer le signe de Z (dôme vers le haut)
-                 exclusions_manuelles=True, # ne pas tracer les taches exclues à la main (selection_gui)
+                 exclusions_manuelles=True, # ne pas tracer les taches exclues à la main (retouche_gui)
                  couleurs_fixes=False,      # échelle de couleur fixe (sinon : min/max des données)
                  z_min=-10.0,               # bas de l'échelle fixe (mm), violet foncé
                  z_bleu=0.0,                # Z (mm) affiché en bleu
@@ -310,8 +310,8 @@ class Detect3D:
         if self.inverser_z:
             z = -z
         ok = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
-        if self.exclusions_manuelles:                             # taches exclues à la main (selection_gui)
-            from Pycaso.selection_class import ExclusionsTaches
+        if self.exclusions_manuelles:                             # taches exclues à la main (retouche_gui)
+            from Pycaso.retouche_class import ExclusionsTaches
             ok &= ~ExclusionsTaches(self.dossier_essai, self.dossier_sortie.name).masque_colonnes(len(x))
         x, y, z = x[ok], y[ok], z[ok]
 
