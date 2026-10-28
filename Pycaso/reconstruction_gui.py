@@ -1,7 +1,7 @@
 """Interface tkinter de Detect3D : saisie des paramètres puis reconstruction 3D.
 
 Usage depuis un script placé à côté du dossier Pycaso/ :
-    from Pycaso.detect3D_gui import run_detect3D_gui
+    from Pycaso.reconstruction_gui import run_detect3D_gui
     run_detect3D_gui()
 
 Les valeurs proposées au départ sont les valeurs par défaut de Detect3D.__init__.
@@ -15,24 +15,170 @@ from tkinter import ttk, messagebox, filedialog
 from Pycaso.reconstruction_class import Detect3D
 
 
+# ----- outils tkinter (style, choix des images, explorateur de dossiers) -----
+
+_PAD = {"padx": 6, "pady": 3}
+_VERT, _ORANGE, _ROUGE = "#2e7d32", "#e65100", "#c62828"
+_AIDE_IMAGES = "ex. 0, 10:20, -1   (a:b = de a à b inclus ; -1 = dernière)"
+
+
+def _appliquer_style(root):
+    """Thème 'clam' + cases à cocher lisibles (vert avec coche si cochée)."""
+    style = ttk.Style(root)
+    style.theme_use("clam")
+    style.configure("TCheckbutton", indicatorsize=16, indicatormargin=(2, 2, 8, 2),
+                    indicatorbackground="white", indicatorforeground="white",
+                    upperbordercolor="#555555", lowerbordercolor="#555555")
+    style.map("TCheckbutton",
+              indicatorbackground=[("disabled", "#dddddd"),
+                                   ("pressed", "#a5d6a7"),
+                                   ("selected", "#2e7d32")],
+              indicatorforeground=[("selected", "white")],
+              foreground=[("disabled", "#aaaaaa"), ("selected", "black"),
+                          ("!selected", "#666666")])
+
+
+# ----- images -----
+
+def _lire_images(texte):
+    """'0, 10:13, -1' -> [0, 10, 11, 12, 13, -1] ; ValueError si mal écrit."""
+    images = []
+    for morceau in texte.replace(";", ",").split(","):
+        morceau = morceau.strip()
+        if not morceau:
+            continue
+        if ":" in morceau:
+            a, b = (int(x) for x in morceau.split(":"))
+            images.extend(range(a, b + 1) if a <= b else range(a, b - 1, -1))
+        else:
+            images.append(int(morceau))
+    return images
+
+
+def _ecrire_images(images):
+    """[0, 10, 11, 12, 13, -1] -> '0, 10:13, -1' (suites de 3 et plus regroupées)."""
+    morceaux, i, images = [], 0, list(images)
+    while i < len(images):
+        j = i
+        while j + 1 < len(images) and images[j + 1] == images[j] + 1:
+            j += 1
+        if j - i >= 2:
+            morceaux.append(f"{images[i]}:{images[j]}")
+        else:
+            morceaux.extend(str(n) for n in images[i:j + 1])
+        i = j + 1
+    return ", ".join(morceaux)
+
+
+def _choisir_images(parent, nb, var, titre="Images", indisponibles=()):
+    """Fenêtre de cases à cocher (une par image 0..nb-1) ; écrit le choix dans var (StringVar).
+
+    indisponibles : images grisées, non sélectionnables (ex. l'image 0 sans l'état plat).
+    """
+    indisponibles = set(indisponibles)
+    try:
+        actuelles = {n % nb for n in _lire_images(var.get()) if -nb <= n < nb} - indisponibles
+    except ValueError:
+        actuelles = set()
+
+    fen = tk.Toplevel(parent)
+    fen.title(f"{titre} ({nb} images)")
+    fen.transient(parent)
+    fen.grab_set()
+    cases = [tk.BooleanVar(value=i in actuelles) for i in range(nb)]
+    COLONNES = 10
+
+    # zone défilante (utile quand il y a beaucoup d'images)
+    cadre = ttk.Frame(fen)
+    cadre.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+    canvas = tk.Canvas(cadre, highlightthickness=0,
+                       height=min(400, 30 * ((nb + COLONNES - 1) // COLONNES) + 4))
+    barre = ttk.Scrollbar(cadre, orient="vertical", command=canvas.yview)
+    grille = ttk.Frame(canvas)
+    canvas.create_window((0, 0), window=grille, anchor="nw")
+    canvas.configure(yscrollcommand=barre.set)
+    canvas.grid(row=0, column=0, sticky="nsew")
+    barre.grid(row=0, column=1, sticky="ns")
+    for i, v in enumerate(cases):
+        ttk.Checkbutton(grille, text=f"{i:>3}", variable=v, width=5,
+                        state="disabled" if i in indisponibles else "normal").grid(
+            row=i // COLONNES, column=i % COLONNES, sticky="w", padx=2, pady=2)
+    grille.update_idletasks()
+    canvas.configure(width=grille.winfo_reqwidth(), scrollregion=canvas.bbox("all"))
+    molette = lambda e: canvas.yview_scroll(-1 if (e.num == 4 or e.delta > 0) else 1, "units")
+    for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+        fen.bind_all(seq, molette)
+
+    def tout(val):
+        for i, v in enumerate(cases):
+            if i not in indisponibles:
+                v.set(val if val is not None else not v.get())
+
+    def fermer():
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            fen.unbind_all(seq)
+        fen.destroy()
+
+    def valider():
+        var.set(_ecrire_images([i for i, v in enumerate(cases) if v.get()]))
+        fermer()
+
+    fb = ttk.Frame(fen)
+    fb.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
+    for j, (lib, val) in enumerate((("Tout", True), ("Aucune", False), ("Inverser", None))):
+        ttk.Button(fb, text=lib, command=lambda v=val: tout(v)).grid(row=0, column=j, padx=2)
+    ttk.Button(fb, text="Dernière", command=lambda: cases[-1].set(True)).grid(row=0, column=3, padx=2)
+    fb.columnconfigure(4, weight=1)
+    ttk.Button(fb, text="Annuler", command=fermer).grid(row=0, column=5, padx=2)
+    ttk.Button(fb, text="OK", command=valider).grid(row=0, column=6, padx=2)
+    fen.bind("<Return>", lambda _e: valider())
+    fen.bind("<Escape>", lambda _e: fermer())
+    fen.protocol("WM_DELETE_WINDOW", fermer)
+    return fen
+
+
+# ----- dossiers -----
+
+def _dossier_depart(prefere, secours="."):
+    """prefere s'il existe ; sinon le premier dossier existant en remontant depuis secours."""
+    d = os.path.abspath(os.path.expanduser(prefere))
+    if os.path.isdir(d):
+        return d
+    d = os.path.abspath(secours or ".")
+    while not os.path.isdir(d) and os.path.dirname(d) != d:
+        d = os.path.dirname(d)
+    return d
+
+
+def _parcourir_essai(parent, var, prefere, titre="Dossier de l'essai (ex. date/essai1)"):
+    """Explorateur de dossiers commençant dans prefere ; écrit le choix dans var (StringVar)."""
+    d = filedialog.askdirectory(initialdir=_dossier_depart(prefere, var.get().strip()),
+                                parent=parent, title=titre)
+    if d:
+        try:
+            rel = os.path.relpath(d)
+        except ValueError:                 # Windows : autre lecteur que le dossier d'exécution
+            rel = ".."
+        var.set(d if rel.startswith("..") else rel)
+
+
 class Detect3DGUI:
     """Fenêtre de saisie des paramètres de Detect3D."""
 
     CASES = [
-        ("deplacement", "Tracer le déplacement z − z(image 0) plutôt que z"),
         ("inverser_z", "Inverser l'axe Z (dôme vers le haut)"),
-        ("enregistrer_figures", "Enregistrer les figures (.svg dans le dossier des résultats)"),
+        ("enregistrer_figures", "Enregistrer les figures (.png dans le dossier des résultats)"),
         ("afficher_figures", "Afficher les figures à la fin"),
     ]
-    PAD = {"padx": 6, "pady": 3}
-    VERT, ORANGE, ROUGE = "#2e7d32", "#e65100", "#c62828"
+    PAD = _PAD
+    VERT, ORANGE, ROUGE = _VERT, _ORANGE, _ROUGE
 
     def __init__(self):
         self.result = None
         self.root = tk.Tk()
         self.root.title("Reconstruction 3D des taches")
         self.root.resizable(False, False)
-        self._setup_style()
+        _appliquer_style(self.root)
         self._creer_variables(Detect3D())       # valeurs par défaut de la classe
         self._construire()
         # le dossier de mesure suit la date tant que l'utilisateur ne l'a pas modifié
@@ -57,14 +203,15 @@ class Detect3DGUI:
             "dossier_essai": tk.StringVar(value=defaut.dossier_essai),
             "methode": tk.StringVar(value=defaut.methode),
             "degre": tk.StringVar(value=str(defaut.degre)),
-            "images_a_tracer": tk.StringVar(value=self.ecrire_images(defaut.images_a_tracer)),
-            "seuil_aberrants": tk.StringVar(value=f"{defaut.seuil_aberrants:g}"),
+            "images_a_tracer": tk.StringVar(value=_ecrire_images(defaut.images_a_tracer)),
             "facteur_z": tk.StringVar(value=f"{defaut.facteur_z:g}"),
             "couleurs_fixes": tk.BooleanVar(value=bool(defaut.couleurs_fixes)),
             "z_min": tk.StringVar(value=f"{defaut.z_min:g}"),
             "z_bleu": tk.StringVar(value=f"{defaut.z_bleu:g}"),
             "z_jaune": tk.StringVar(value=f"{defaut.z_jaune:g}"),
             "z_max": tk.StringVar(value=f"{defaut.z_max:g}"),
+            "etat_plat": tk.BooleanVar(value=bool(defaut.etat_plat)),
+            "deplacement": tk.BooleanVar(value=bool(defaut.deplacement)),
         }
         for nom, _ in self.CASES:
             self.v[nom] = tk.BooleanVar(value=bool(getattr(defaut, nom)))
@@ -87,10 +234,16 @@ class Detect3DGUI:
         ligne.grid(row=1, column=1, columnspan=2, sticky="w", **pad)
         ttk.Entry(ligne, textvariable=self.v["dossier_essai"], width=44).grid(row=0, column=0)
         ttk.Button(ligne, text="…", width=3, command=self._parcourir).grid(row=0, column=1, padx=(4, 0))
+        self.case_plat = ttk.Checkbutton(f, text="Utiliser l'état initial à partir des photos non flambées",
+                                         variable=self.v["etat_plat"], command=self._maj)
+        self.case_plat.grid(row=2, column=0, columnspan=3, sticky="w", **pad)
+        ttk.Checkbutton(f, text="Tracer le déplacement z − z(image 0) plutôt que la position z "
+                                "(décoché : axe vertical automatique)",
+                        variable=self.v["deplacement"]).grid(row=3, column=0, columnspan=3, sticky="w", **pad)
         self.lbl_Lp = ttk.Label(f, wraplength=520, justify="left")
-        self.lbl_Lp.grid(row=2, column=0, columnspan=3, sticky="w", **pad)
+        self.lbl_Lp.grid(row=4, column=0, columnspan=3, sticky="w", **pad)
         self.lbl_sortie = ttk.Label(f, foreground="gray", wraplength=520)
-        self.lbl_sortie.grid(row=3, column=0, columnspan=3, sticky="w", **pad)
+        self.lbl_sortie.grid(row=5, column=0, columnspan=3, sticky="w", **pad)
 
         # --- Étalonnage ---
         f = self._bloc("Étalonnage", 1)
@@ -117,13 +270,9 @@ class Detect3DGUI:
         li.grid(row=0, column=1, columnspan=2, sticky="w", **pad)
         ttk.Entry(li, textvariable=self.v["images_a_tracer"], width=30).grid(row=0, column=0)
         ttk.Button(li, text="Choisir…", command=self._choisir_images).grid(row=0, column=1, padx=(4, 8))
-        ttk.Label(li, text="ex. 0, 10:20, -1   (a:b = de a à b inclus ; -1 = dernière)",
+        ttk.Label(li, text=_AIDE_IMAGES,
                   foreground="gray").grid(row=0, column=2, sticky="w")
-        ttk.Label(f, text="Seuil des aberrants (mm)").grid(row=1, column=0, sticky="w", **pad)
-        ttk.Entry(f, textvariable=self.v["seuil_aberrants"], width=16).grid(row=1, column=1, sticky="w", **pad)
-        ttk.Label(f, text="déplacement max affiché ; 0 = pas de filtre",
-                  foreground="gray").grid(row=1, column=2, sticky="w", **pad)
-        for i, (nom, lib) in enumerate(self.CASES, start=2):
+        for i, (nom, lib) in enumerate(self.CASES, start=1):
             ttk.Checkbutton(f, text=lib, variable=self.v[nom]).grid(row=i, column=0, columnspan=3,
                                                                      sticky="w", **pad)
         i += 1
@@ -147,21 +296,6 @@ class Detect3DGUI:
         self.root.bind("<Return>", lambda _e: self._on_ok())
         self.root.bind("<Escape>", lambda _e: self.root.destroy())
 
-    def _setup_style(self):
-        """Thème 'clam' + cases à cocher lisibles (vert avec coche si cochée)."""
-        style = ttk.Style(self.root)
-        style.theme_use("clam")
-        style.configure("TCheckbutton", indicatorsize=16, indicatormargin=(2, 2, 8, 2),
-                        indicatorbackground="white", indicatorforeground="white",
-                        upperbordercolor="#555555", lowerbordercolor="#555555")
-        style.map("TCheckbutton",
-                  indicatorbackground=[("disabled", "#dddddd"),
-                                       ("pressed", "#a5d6a7"),
-                                       ("selected", "#2e7d32")],
-                  indicatorforeground=[("selected", "white")],
-                  foreground=[("disabled", "#aaaaaa"), ("selected", "black"),
-                              ("!selected", "#666666")])
-
     def _maj_couleurs(self):
         """Les champs Z bleu / Z jaune ne sont actifs que si l'échelle fixe est cochée."""
         etat = "normal" if self.v["couleurs_fixes"].get() else "disabled"
@@ -170,102 +304,19 @@ class Detect3DGUI:
 
     # ----- images à tracer -----
 
-    @staticmethod
-    def lire_images(texte):
-        """'0, 10:13, -1' -> [0, 10, 11, 12, 13, -1] ; ValueError si mal écrit."""
-        images = []
-        for morceau in texte.replace(";", ",").split(","):
-            morceau = morceau.strip()
-            if not morceau:
-                continue
-            if ":" in morceau:
-                a, b = (int(x) for x in morceau.split(":"))
-                images.extend(range(a, b + 1) if a <= b else range(a, b - 1, -1))
-            else:
-                images.append(int(morceau))
-        return images
-
-    @staticmethod
-    def ecrire_images(images):
-        """[0, 10, 11, 12, 13, -1] -> '0, 10:13, -1' (suites de 3 et plus regroupées)."""
-        morceaux, i, images = [], 0, list(images)
-        while i < len(images):
-            j = i
-            while j + 1 < len(images) and images[j + 1] == images[j] + 1:
-                j += 1
-            if j - i >= 2:
-                morceaux.append(f"{images[i]}:{images[j]}")
-            else:
-                morceaux.extend(str(n) for n in images[i:j + 1])
-            i = j + 1
-        return ", ".join(morceaux)
-
     def _choisir_images(self):
-        """Tableau de cases à cocher, une par image de Lp_final ; met à jour le champ texte."""
-        infos = self._courant().infos_Lp()
+        """Cases à cocher : 0 = état plat (grisée sans la correction), 1..n = photos de l'essai."""
+        essai = self._courant()
+        infos = essai.infos_Lp()
         if infos is None:
-            messagebox.showerror("Images à tracer", "Lp_final.npy introuvable : impossible de lister "
-                                 "les images.\nVérifier le dossier de l'essai.", parent=self.root)
+            messagebox.showerror("Images à tracer", f"{essai.fichier_Lp.name} introuvable : impossible de "
+                                 "lister les images.\nVérifier le dossier de l'essai.", parent=self.root)
             return
-        nb = infos[0]
-        try:
-            actuelles = {n % nb for n in self.lire_images(self.v["images_a_tracer"].get())
-                         if -nb <= n < nb}
-        except ValueError:
-            actuelles = set()
-
-        fen = tk.Toplevel(self.root)
-        fen.title(f"Images à tracer ({nb} images)")
-        fen.transient(self.root)
-        fen.grab_set()
-        cases = [tk.BooleanVar(value=i in actuelles) for i in range(nb)]
-        COLONNES = 10
-
-        # zone défilante (utile quand il y a beaucoup d'images)
-        cadre = ttk.Frame(fen)
-        cadre.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
-        canvas = tk.Canvas(cadre, highlightthickness=0,
-                           height=min(400, 30 * ((nb + COLONNES - 1) // COLONNES) + 4))
-        barre = ttk.Scrollbar(cadre, orient="vertical", command=canvas.yview)
-        grille = ttk.Frame(canvas)
-        canvas.create_window((0, 0), window=grille, anchor="nw")
-        canvas.configure(yscrollcommand=barre.set)
-        canvas.grid(row=0, column=0, sticky="nsew")
-        barre.grid(row=0, column=1, sticky="ns")
-        for i, var in enumerate(cases):
-            ttk.Checkbutton(grille, text=f"{i:>3}", variable=var, width=5).grid(
-                row=i // COLONNES, column=i % COLONNES, sticky="w", padx=2, pady=2)
-        grille.update_idletasks()
-        canvas.configure(width=grille.winfo_reqwidth(), scrollregion=canvas.bbox("all"))
-        molette = lambda e: canvas.yview_scroll(-1 if (e.num == 4 or e.delta > 0) else 1, "units")
-        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
-            fen.bind_all(seq, molette)
-
-        def tout(val):
-            for var in cases:
-                var.set(val if val is not None else not var.get())
-
-        def valider():
-            choix = [i for i, var in enumerate(cases) if var.get()]
-            self.v["images_a_tracer"].set(self.ecrire_images(choix))
-            fermer()
-
-        def fermer():
-            for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
-                fen.unbind_all(seq)
-            fen.destroy()
-
-        fb = ttk.Frame(fen)
-        fb.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
-        for j, (lib, val) in enumerate((("Tout", True), ("Aucune", False), ("Inverser", None))):
-            ttk.Button(fb, text=lib, command=lambda v=val: tout(v)).grid(row=0, column=j, padx=2)
-        ttk.Button(fb, text="Dernière", command=lambda: cases[-1].set(True)).grid(row=0, column=3, padx=2)
-        fb.columnconfigure(4, weight=1)
-        ttk.Button(fb, text="Annuler", command=fermer).grid(row=0, column=5, padx=2)
-        ttk.Button(fb, text="OK", command=valider).grid(row=0, column=6, padx=2)
-        fen.bind("<Return>", lambda _e: valider())
-        fen.bind("<Escape>", lambda _e: fermer())
-        fen.protocol("WM_DELETE_WINDOW", fermer)
+        if essai.etat_plat:
+            nb, indisponibles = infos[0], ()
+        else:
+            nb, indisponibles = infos[0] + 1, (0,)        # image 0 = état plat, absente de Lp_final.npy
+        _choisir_images(self.root, nb, self.v["images_a_tracer"], "Images à tracer", indisponibles)
 
     # ----- chemin du dossier de mesure -----
 
@@ -276,20 +327,8 @@ class Detect3DGUI:
             self.v["dossier_essai"].set(self._chemin_auto)
 
     def _parcourir(self):
-        """Ouvre l'explorateur dans Detect3D.DOSSIER_PARCOURIR.
-
-        S'il n'existe pas : premier dossier existant en remontant depuis l'essai saisi, sinon ".".
-        """
-        depart = os.path.abspath(os.path.expanduser(Detect3D.DOSSIER_PARCOURIR))
-        if not os.path.isdir(depart):
-            depart = os.path.abspath(self.v["dossier_essai"].get().strip() or ".")
-            while not os.path.isdir(depart) and os.path.dirname(depart) != depart:
-                depart = os.path.dirname(depart)
-        d = filedialog.askdirectory(initialdir=depart, parent=self.root,
-                                    title="Dossier de l'essai (ex. date/essai1)")
-        if d:
-            rel = os.path.relpath(d)
-            self.v["dossier_essai"].set(d if rel.startswith("..") else rel)
+        """Explorateur de dossiers commençant dans Detect3D.DOSSIER_PARCOURIR."""
+        _parcourir_essai(self.root, self.v["dossier_essai"], Detect3D.DOSSIER_PARCOURIR)
 
     # ----- vérifications en direct -----
 
@@ -297,7 +336,7 @@ class Detect3DGUI:
         """Detect3D portant la date, le dossier et la méthode saisis (pour les chemins)."""
         return Detect3D(date=self.v["date"].get().strip(),
                         dossier_essai=self.v["dossier_essai"].get().strip() or None,
-                        methode=self.v["methode"].get(), degre=degre)
+                        methode=self.v["methode"].get(), degre=degre, etat_plat=self.v["etat_plat"].get())
 
     def _maj_degres(self, *_):
         """Quand la méthode change : liste des degrés étalonnés et degré proposé."""
@@ -316,19 +355,24 @@ class Detect3DGUI:
         except ValueError:
             degre = None
         essai = self._courant(degre)
+        corrige = essai.dossier_entree / Detect3D.FICHIER_LP_CORRIGE
+        self.case_plat.state(["!disabled"] if corrige.is_file() or essai.etat_plat else ["disabled"])
+        nom = essai.fichier_Lp.name
 
         infos = essai.infos_Lp()
         if infos:
-            self.lbl_Lp.configure(text=f"✔ Lp_final.npy : {infos[0]} images, {infos[1]} points "
-                                       f"(dans {essai.dossier_entree})", foreground=self.VERT)
+            plat = " ; image 0 = état plat, 1 = 1re image de l'essai" if essai.etat_plat else ""
+            self.lbl_Lp.configure(text=f"✔ {nom} : {infos[0]} images, {infos[1]} points "
+                                       f"(dans {essai.dossier_entree}){plat}", foreground=self.VERT)
         else:
-            self.lbl_Lp.configure(text=f"✘ Lp_final.npy introuvable dans {essai.dossier_entree} : "
-                                       "lancer d'abord la détection des taches", foreground=self.ROUGE)
+            avant = "la correction par l'état plat" if essai.etat_plat else "la détection des taches"
+            self.lbl_Lp.configure(text=f"✘ {nom} introuvable dans {essai.dossier_entree} : "
+                                       f"lancer d'abord {avant}", foreground=self.ROUGE)
         self.lbl_sortie.configure(text=f"Résultats dans : {essai.dossier_sortie}")
 
         degres = essai.degres_disponibles()
         if degre is not None and degre in degres:
-            ou = os.path.relpath(essai.dossier_constantes())
+            ou = essai.dossier_constantes()
             self.lbl_calib.configure(text=f"✔ étalonnage trouvé :\n{ou}", foreground=self.VERT)
         elif degres:
             self.lbl_calib.configure(text=f"✘ pas d'étalonnage {essai.methode} pour ce degré\n"
@@ -352,17 +396,10 @@ class Detect3DGUI:
             degre = None
             erreurs.append("Degré : entier attendu")
         try:
-            images = tuple(self.lire_images(self.v["images_a_tracer"].get()))
+            images = tuple(_lire_images(self.v["images_a_tracer"].get()))
         except ValueError:
             images = ()
             erreurs.append("Images à tracer : entiers ou plages a:b séparés par des virgules (ex. 0, 10:20, -1)")
-        try:
-            seuil = float(self.v["seuil_aberrants"].get().replace(",", "."))
-            if seuil < 0:
-                raise ValueError
-        except ValueError:
-            seuil = 0.0
-            erreurs.append("Seuil des aberrants : nombre positif attendu")
         try:
             facteur_z = float(self.v["facteur_z"].get().replace(",", "."))
             if facteur_z == 0:
@@ -384,24 +421,29 @@ class Detect3DGUI:
             essai = self._courant(degre)
             infos = essai.infos_Lp()
             if infos is None:
-                erreurs.append(f"Lp_final.npy introuvable dans {essai.dossier_entree}")
+                erreurs.append(f"{essai.fichier_Lp.name} introuvable dans {essai.dossier_entree}")
             else:
-                hors = [n for n in images if not -infos[0] <= n < infos[0]]
+                plat = essai.etat_plat
+                nb = infos[0] if plat else infos[0] + 1        # numéros 0..nb-1 (0 = état plat)
+                premiere = 0 if plat else 1
+                hors = [n for n in images if not (premiere <= n < nb or -(nb - premiere) <= n < 0)]
                 if hors:
-                    erreurs.append(f"Images à tracer hors limites : {hors} "
-                                   f"(Lp_final contient {infos[0]} images : 0 à {infos[0] - 1})")
+                    erreurs.append(f"Images à tracer hors limites : {hors} (images {premiere} à {nb - 1}"
+                                   + ("" if plat else " ; l'image 0, état plat, demande « État plat »") + ")")
             if essai.dossier_constantes() is None:
                 erreurs.append(f"Étalonnage {essai.methode} {essai.tag} introuvable : "
                                "il est nécessaire pour la reconstruction 3D")
         if erreurs:
-            messagebox.showerror("Paramètres invalides", "\n".join(erreurs))
+            messagebox.showerror("Paramètres invalides", "\n".join(erreurs), parent=self.root)
             return
 
         self.result = Detect3D(date=date,
                                dossier_essai=self.v["dossier_essai"].get().strip(),
                                methode=self.v["methode"].get(), degre=degre,
-                               images_a_tracer=images, seuil_aberrants=seuil,
+                               images_a_tracer=images,
                                facteur_z=facteur_z, couleurs_fixes=self.v["couleurs_fixes"].get(),
+                               etat_plat=self.v["etat_plat"].get(),
+                               deplacement=self.v["deplacement"].get(),
                                **echelle,
                                **{nom: self.v[nom].get() for nom, _ in self.CASES})
         self.root.destroy()

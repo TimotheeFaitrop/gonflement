@@ -1,4 +1,6 @@
-"""Interface tkinter de Correction : correction d'un essai par les photos de l'état plat.
+"""Interface tkinter de Correction : appariement de l'état plat avec la 1re image de l'essai.
+
+À lancer après la détection des taches et avant la reconstruction.
 
 Usage depuis un script placé à côté du dossier Pycaso/ :
     from Pycaso.correction_gui import run_correction_gui
@@ -10,7 +12,6 @@ Les valeurs proposées au départ sont les valeurs par défaut de Correction.__i
 import os
 import re
 import tkinter as tk
-from pathlib import Path
 from tkinter import ttk, messagebox, filedialog
 
 from Pycaso.correction_class import Correction
@@ -68,8 +69,9 @@ class CorrectionGUI:
     """Fenêtre de saisie des paramètres de Correction."""
 
     CASES = [
-        ("enregistrer_figures", "Enregistrer les figures (.png dans <essai>/correction/<source>)"),
-        ("afficher_figures", "Afficher les figures à la fin"),
+        ("controle_stereo", "Contrôle : les deux taches plates doivent aussi être appariées gauche/droite"),
+        ("enregistrer_figures", "Enregistrer la figure (appariemment_et_suivi/correction/)"),
+        ("afficher_figures", "Afficher la figure à la fin"),
     ]
     MODELES = ("affine", "homographie", "polynome2", "polynome3")     # ceux d'AppariementStereo
     PAD = _PAD
@@ -85,11 +87,9 @@ class CorrectionGUI:
         # le dossier de l'essai suit la date tant que l'utilisateur ne l'a pas modifié
         self._chemin_auto = self.v["dossier_essai"].get()
         self.v["date"].trace_add("write", self._suivre_date)
-        for k in ("date", "dossier_essai"):
-            self.v[k].trace_add("write", self._maj_sources)
-        for k in ("source", "prefixe_photo"):
+        for k in ("date", "dossier_essai", "prefixe_photo"):
             self.v[k].trace_add("write", self._maj)
-        self._maj_sources()
+        self._maj()
 
     def ask(self):
         """Affiche la fenêtre ; renvoie un Correction rempli, ou None si annulé."""
@@ -102,21 +102,16 @@ class CorrectionGUI:
         self.v = {
             "date": tk.StringVar(value=c.date),
             "dossier_essai": tk.StringVar(value=c.dossier_essai),
-            "source": tk.StringVar(value=c.source),
             "prefixe_photo": tk.StringVar(value=c.prefixe_photo),
-            "relire_plat": tk.BooleanVar(value=bool(c.relire_plat)),
-            "facteur_z": tk.StringVar(value="" if c.facteur_z is None else f"{c.facteur_z:g}"),
             "taille_min_pix": tk.StringVar(value=str(c.taille_min_pix)),
             "taille_max_pix": tk.StringVar(value=str(c.taille_max_pix)),
             "w_spots": tk.BooleanVar(value=bool(c.w_spots)),
-            "seuils_recalage": tk.StringVar(value=" ".join(f"{s:g}" for s in c.seuils_recalage)),
-            "modele_recalage": tk.StringVar(value=c.modele_recalage),
-            "seuil_plan": tk.StringVar(value=f"{c.seuil_plan:g}"),
-            "nb_ecarts": tk.StringVar(value=f"{c.nb_ecarts:g}"),
             "seuil_appariement": tk.StringVar(value=f"{c.seuil_appariement:g}"),
             "degre_recalage": tk.StringVar(value=str(c.degre_recalage)),
             "recherche_angle": tk.StringVar(value=f"{c.recherche_angle:g}"),
             "recherche_decalage": tk.StringVar(value=f"{c.recherche_decalage:g}"),
+            "seuils_recalage": tk.StringVar(value=" ".join(f"{s:g}" for s in c.seuils_recalage)),
+            "modele_recalage": tk.StringVar(value=c.modele_recalage),
         }
         for nom, _ in self.CASES:
             self.v[nom] = tk.BooleanVar(value=bool(getattr(c, nom)))
@@ -142,7 +137,7 @@ class CorrectionGUI:
         pad = self.PAD
 
         # --- Essai ---
-        f = self._bloc("Essai à corriger", 0)
+        f = self._bloc("Essai", 0)
         ttk.Label(f, text="Date (AAAA_MM_JJ)").grid(row=0, column=0, sticky="w", **pad)
         ttk.Entry(f, textvariable=self.v["date"], width=16).grid(row=0, column=1, sticky="w", **pad)
         ttk.Label(f, text="Dossier de l'essai").grid(row=1, column=0, sticky="w", **pad)
@@ -150,64 +145,52 @@ class CorrectionGUI:
         l.grid(row=1, column=1, columnspan=2, sticky="w", **pad)
         ttk.Entry(l, textvariable=self.v["dossier_essai"], width=52).grid(row=0, column=0)
         ttk.Button(l, text="…", width=3, command=self._parcourir).grid(row=0, column=1, padx=(4, 0))
-        ttk.Label(f, text="Reconstruction").grid(row=2, column=0, sticky="w", **pad)
-        self.cb_source = ttk.Combobox(f, textvariable=self.v["source"], state="readonly", width=20)
-        self.cb_source.grid(row=2, column=1, sticky="w", **pad)
-        self.lbl_source = ttk.Label(f, wraplength=440, justify="left")
-        self.lbl_source.grid(row=2, column=2, sticky="w", **pad)
+        self.lbl_Lp = ttk.Label(f, wraplength=640, justify="left")
+        self.lbl_Lp.grid(row=2, column=0, columnspan=3, sticky="w", **pad)
 
-        # --- État plat ---
-        f = self._bloc("État plat (photos avant serrage, dans video_extenso_left / _right)", 1)
+        # --- Photos de l'état plat ---
+        f = self._bloc("Photos de l'état plat (avant serrage, dans video_extenso_left / _right)", 1)
         self._entree(f, 0, "Préfixe des photos", "prefixe_photo", "photos <préfixe>_L.* et <préfixe>_R.*")
         self.lbl_photos = ttk.Label(f, wraplength=640, justify="left")
         self.lbl_photos.grid(row=1, column=0, columnspan=3, sticky="w", **pad)
-        self.case_relire = ttk.Checkbutton(f, text="Relire l'état plat déjà reconstruit (sans refaire la détection)",
-                                           variable=self.v["relire_plat"], command=self._maj_plat)
-        self.case_relire.grid(row=2, column=0, columnspan=2, sticky="w", **pad)
-        self.lbl_relire = self._aide(f, "", 2)
-        self.e_facteur, self.lbl_facteur = self._entree(f, 3, "Facteur Z", "facteur_z", "")
-        self.e_aire_min, _ = self._entree(f, 4, "Aire min d'une tache (px)", "taille_min_pix",
-                                          "comme la détection des taches de l'essai")
-        self.e_aire_max, _ = self._entree(f, 5, "Aire max d'une tache (px)", "taille_max_pix", "")
-        self.case_w = ttk.Checkbutton(f, text="Taches blanches sur fond sombre", variable=self.v["w_spots"])
-        self.case_w.grid(row=6, column=0, columnspan=3, sticky="w", **pad)
-        self.e_seuils, _ = self._entree(f, 7, "Seuils gauche/droite (px)", "seuils_recalage",
-                                        "appariement des deux caméras, du plus large au plus serré")
-        ttk.Label(f, text="Modèle gauche/droite").grid(row=8, column=0, sticky="w", **pad)
-        self.cb_modele = ttk.Combobox(f, textvariable=self.v["modele_recalage"], state="readonly",
-                                      values=list(self.MODELES), width=14)
-        self.cb_modele.grid(row=8, column=1, sticky="w", **pad)
-        self._aide(f, "transformation droite → gauche (polynome2 conseillé)", 8)
-        self.widgets_detection = [self.e_facteur, self.e_aire_min, self.e_aire_max, self.case_w,
-                                  self.e_seuils, self.cb_modele]
+        self._entree(f, 2, "Aire min d'une tache (px)", "taille_min_pix", "comme la détection des taches de l'essai")
+        self._entree(f, 3, "Aire max d'une tache (px)", "taille_max_pix", "")
+        ttk.Checkbutton(f, text="Taches blanches sur fond sombre", variable=self.v["w_spots"]).grid(
+            row=4, column=0, columnspan=3, sticky="w", **pad)
 
-        # --- Tri et appariement ---
-        f = self._bloc("Tri des taches et appariement plat → serré", 2)
-        self._entree(f, 0, "Distance max au plan (mm)", "seuil_plan",
-                     "taches plus loin du plan de l'état plat retirées ; 0 = auto")
-        self._entree(f, 1, "Seuil auto (× écart)", "nb_ecarts",
-                     "seuil auto = ce nombre × écart robuste des distances au plan")
-        self._entree(f, 2, "Écart max d'appariement (mm)", "seuil_appariement",
-                     "après recalage ; 0 = auto (0,4 × espacement des taches)")
-        self._entree(f, 3, "Degré du recalage", "degre_recalage",
-                     "champ de déplacement plat → serré dans le plan (2 à 5)")
-        ttk.Label(f, text="Recherche initiale").grid(row=4, column=0, sticky="w", **pad)
+        # --- Appariement ---
+        f = self._bloc("Appariement photo plate → 1re image de l'essai (sur chaque caméra)", 2)
+        ttk.Label(f, text="Recherche initiale").grid(row=0, column=0, sticky="w", **pad)
         lr = ttk.Frame(f)
-        lr.grid(row=4, column=1, columnspan=2, sticky="w", **pad)
+        lr.grid(row=0, column=1, columnspan=2, sticky="w", **pad)
         ttk.Label(lr, text="rotation ±").grid(row=0, column=0, padx=(0, 4))
         ttk.Entry(lr, textvariable=self.v["recherche_angle"], width=8).grid(row=0, column=1)
         ttk.Label(lr, text="°    décalage ±").grid(row=0, column=2, padx=(4, 4))
         ttk.Entry(lr, textvariable=self.v["recherche_decalage"], width=8).grid(row=0, column=3)
-        ttk.Label(lr, text="mm   (mouvement max de l'échantillon au serrage)",
+        ttk.Label(lr, text="px   (mouvement max des taches dans l'image au serrage)",
                   foreground="gray").grid(row=0, column=4, padx=(4, 0))
+        self._entree(f, 1, "Degré du recalage", "degre_recalage",
+                     "champ de déplacement plat → 1re image (2 à 5)")
+        self._entree(f, 2, "Écart max d'appariement (px)", "seuil_appariement",
+                     "après recalage ; 0 = auto (0,4 × espacement des taches)")
+        ttk.Checkbutton(f, text=self.CASES[0][1], variable=self.v["controle_stereo"],
+                        command=self._maj_controle).grid(row=3, column=0, columnspan=3, sticky="w", **pad)
+        self.e_seuils, _ = self._entree(f, 4, "Seuils gauche/droite (px)", "seuils_recalage",
+                                        "comme la détection, du plus large au plus serré")
+        ttk.Label(f, text="Modèle gauche/droite").grid(row=5, column=0, sticky="w", **pad)
+        self.cb_modele = ttk.Combobox(f, textvariable=self.v["modele_recalage"], state="readonly",
+                                      values=list(self.MODELES), width=14)
+        self.cb_modele.grid(row=5, column=1, sticky="w", **pad)
+        self._aide(f, "transformation droite → gauche (polynome2 conseillé)", 5)
 
         # --- Résultats ---
         f = self._bloc("Résultats", 3)
         self.lbl_sortie = ttk.Label(f, wraplength=640, justify="left")
         self.lbl_sortie.grid(row=0, column=0, columnspan=3, sticky="w", **pad)
-        for i, (nom, lib) in enumerate(self.CASES, start=1):
+        for i, (nom, lib) in enumerate(self.CASES[1:], start=1):
             ttk.Checkbutton(f, text=lib, variable=self.v[nom]).grid(row=i, column=0, columnspan=3,
                                                                      sticky="w", **pad)
+        self._maj_controle()
 
         # --- Boutons ---
         fb = ttk.Frame(self.root)
@@ -229,72 +212,40 @@ class CorrectionGUI:
         _parcourir_essai(self.root, self.v["dossier_essai"], Detect3D.DOSSIER_PARCOURIR)
 
     def _courant(self):
-        """Correction portant le dossier, la source et le préfixe saisis (pour les chemins)."""
+        """Correction portant le dossier et le préfixe saisis (pour les chemins)."""
         return Correction(date=self.v["date"].get().strip(),
                           dossier_essai=self.v["dossier_essai"].get().strip() or None,
-                          source=self.v["source"].get() or None,
                           prefixe_photo=self.v["prefixe_photo"].get().strip() or "photo_init",
                           taille_min_pix=0, taille_max_pix=0, w_spots=False,    # inutiles ici :
                           seuils_recalage=(1,), modele_recalage="affine")       # évite d'importer la détection
 
     # ----- mises à jour en direct -----
 
-    def _maj_sources(self, *_):
-        sources = self._courant().sources_disponibles()
-        self.cb_source.configure(values=sources)
-        if sources and self.v["source"].get() not in sources:
-            self.v["source"].set(sources[0])         # déclenche _maj
-        else:
-            self._maj()
-
     def _maj(self, *_):
         c = self._courant()
-        infos = c.infos(c.dossier_entree)
+        infos = c.infos_Lp(c.fichier_Lp)
         if infos:
-            self.lbl_source.configure(text=f"✔ {infos[0]} images, {infos[1]} taches (image 0 = état serré)",
-                                      foreground=_VERT)
+            self.lbl_Lp.configure(text=f"✔ Lp_final.npy : {infos[0]} images, {infos[1]} taches "
+                                       f"(image 0 = 1re image de l'essai, flambée)", foreground=_VERT)
         else:
-            self.lbl_source.configure(text=f"✘ aucune reconstruction dans "
-                                           f"{Path(c.dossier_essai) / Correction.SOUS_DOSSIER_RECONSTRUCTION}",
-                                      foreground=_ROUGE)
-
+            self.lbl_Lp.configure(text=f"✘ Lp_final.npy introuvable dans {c.dossier} : "
+                                       "lancer d'abord la détection des taches", foreground=_ROUGE)
         lignes, tout = [], True
-        for cote in Correction.CAMERAS:
+        for cote, (lettre, _, _) in Correction.CAMERAS.items():
             photo, masque = c.photo_plat(cote), c.masque(cote)
             ok = photo is not None and masque.is_file()
             tout &= ok
             lignes.append(f"{'✔' if ok else '✘'} {cote} : "
-                          + (photo.name if photo else f"{c.prefixe_photo}_{Correction.CAMERAS[cote][0]}.* absente")
+                          + (photo.name if photo else f"{c.prefixe_photo}_{lettre}.* absente")
                           + ("" if masque.is_file() else f", {masque.name} absent"))
-        self.lbl_photos.configure(text="    ".join(lignes) + f"   (dans {c.dossier_essai})",
-                                  foreground=_VERT if tout else _ROUGE)
+        self.lbl_photos.configure(text="    ".join(lignes), foreground=_VERT if tout else _ROUGE)
+        self.lbl_sortie.configure(text=f"Écrit {c.fichier_Lp_corrige}\n(image 0 = état plat, 1 = 1re image "
+                                       "de l'essai) ; puis lancer la reconstruction en cochant « état plat ».")
 
-        if c.plat_deja_reconstruit():
-            self.case_relire.state(["!disabled"])
-            n = c.infos(c.dossier_plat)
-            self.lbl_relire.configure(text=f"trouvé : {n[1]} taches dans {c.dossier_plat}")
-        else:
-            self.v["relire_plat"].set(False)
-            self.case_relire.state(["disabled"])
-            self.lbl_relire.configure(text="pas encore reconstruit")
-
-        try:
-            methode, degre, fz = c.methode_source()
-            self.lbl_facteur.configure(text=f"vide = celui de la source ({methode} {degre}, facteur {fz:g})")
-        except ValueError as e:
-            self.lbl_facteur.configure(text=f"vide = celui de la source ({e})")
-        self.lbl_sortie.configure(text=f"Reconstruction corrigée : {c.dossier_corrige}\n"
-                                       f"(image 0 = état plat, 1 = état serré ; à choisir comme source "
-                                       f"« {c.source_corrigee} » pour la déformation et l'anisotropie)")
-        self._maj_plat()
-
-    def _maj_plat(self, *_):
-        """Les réglages de détection ne servent que si l'état plat est reconstruit."""
-        etat = ["disabled"] if self.v["relire_plat"].get() else ["!disabled"]
-        for w in self.widgets_detection:
-            w.state(etat)
-        if not self.v["relire_plat"].get():
-            self.cb_modele.state(["readonly"])
+    def _maj_controle(self, *_):
+        etat = ["!disabled"] if self.v["controle_stereo"].get() else ["disabled"]
+        self.e_seuils.state(etat)
+        self.cb_modele.state(etat + (["readonly"] if self.v["controle_stereo"].get() else []))
 
     # ----- validation -----
 
@@ -317,16 +268,17 @@ class CorrectionGUI:
         prefixe = self.v["prefixe_photo"].get().strip()
         if not prefixe:
             erreurs.append("Préfixe des photos : obligatoire")
-        relire = self.v["relire_plat"].get()
-        facteur = None
-        if self.v["facteur_z"].get().strip():
-            facteur = self._nombre("facteur_z", "Facteur Z", erreurs, float)
-            if facteur == 0:
-                erreurs.append("Facteur Z : non nul")
         aire_min = self._nombre("taille_min_pix", "Aire min", erreurs, int, 1, defaut=100)
         aire_max = self._nombre("taille_max_pix", "Aire max", erreurs, int, 1, defaut=1000)
         if aire_min >= aire_max:
             erreurs.append("L'aire min doit être inférieure à l'aire max")
+        seuil_app = self._nombre("seuil_appariement", "Écart max d'appariement", erreurs, float, 0)
+        degre = self._nombre("degre_recalage", "Degré du recalage", erreurs, int, 1, defaut=3)
+        if degre > 6:
+            erreurs.append("Degré du recalage : 6 au plus")
+        angle = self._nombre("recherche_angle", "Rotation cherchée", erreurs, float, 0, defaut=15.0)
+        decalage = self._nombre("recherche_decalage", "Décalage cherché", erreurs, float, 0,
+                                strict=True, defaut=200.0)
         txt = self.v["seuils_recalage"].get().strip()
         try:
             seuils = tuple(float(s) for s in re.split(r"[;,\s]+", txt) if s)
@@ -335,49 +287,33 @@ class CorrectionGUI:
         except ValueError:
             seuils = (80.0, 30.0, 10.0)
             erreurs.append(f"Seuils gauche/droite : « {txt} » invalide (nombres positifs, ex. 80 30 10)")
-        seuil_plan = self._nombre("seuil_plan", "Distance max au plan", erreurs, float, 0)
-        nb_ecarts = self._nombre("nb_ecarts", "Seuil auto", erreurs, float, 0, strict=True, defaut=4.0)
-        seuil_app = self._nombre("seuil_appariement", "Écart max d'appariement", erreurs, float, 0)
-        degre = self._nombre("degre_recalage", "Degré du recalage", erreurs, int, 1, defaut=3)
-        angle = self._nombre("recherche_angle", "Rotation cherchée", erreurs, float, 0, defaut=15.0)
-        decalage = self._nombre("recherche_decalage", "Décalage cherché", erreurs, float, 0,
-                                strict=True, defaut=10.0)
-        if degre > 6:
-            erreurs.append("Degré du recalage : 6 au plus")
         if not erreurs:
             c = self._courant()
-            if c.infos(c.dossier_entree) is None:
-                erreurs.append(f"Reconstruction de l'essai introuvable : {c.dossier_entree}")
-            if not relire:
-                for cote, (lettre, _) in Correction.CAMERAS.items():
-                    if c.photo_plat(cote) is None:
-                        erreurs.append(f"Photo {prefixe}_{lettre}.* introuvable dans {c.dossier_camera(cote)}")
-                    if not c.masque(cote).is_file():
-                        erreurs.append(f"Masque introuvable : {c.masque(cote)}")
-                try:
-                    c.methode_source()
-                except ValueError as e:
-                    erreurs.append(str(e))
+            if not c.fichier_Lp.is_file():
+                erreurs.append(f"Lp_final.npy introuvable dans {c.dossier} : lancer d'abord la détection")
+            for cote, (lettre, _, _) in Correction.CAMERAS.items():
+                if c.photo_plat(cote) is None:
+                    erreurs.append(f"Photo {prefixe}_{lettre}.* introuvable dans {c.dossier_camera(cote)}")
+                if not c.masque(cote).is_file():
+                    erreurs.append(f"Masque introuvable : {c.masque(cote)}")
         if erreurs:
             messagebox.showerror("Paramètres invalides", "\n".join(erreurs), parent=self.root)
             return
 
         self.result = Correction(date=date,
                                  dossier_essai=self.v["dossier_essai"].get().strip(),
-                                 source=self.v["source"].get(),
-                                 prefixe_photo=prefixe, relire_plat=relire, facteur_z=facteur,
+                                 prefixe_photo=prefixe,
                                  taille_min_pix=aire_min, taille_max_pix=aire_max,
                                  w_spots=self.v["w_spots"].get(),
-                                 seuils_recalage=seuils, modele_recalage=self.v["modele_recalage"].get(),
-                                 seuil_plan=seuil_plan, nb_ecarts=nb_ecarts,
                                  seuil_appariement=seuil_app, degre_recalage=degre,
                                  recherche_angle=angle, recherche_decalage=decalage,
+                                 seuils_recalage=seuils, modele_recalage=self.v["modele_recalage"].get(),
                                  **{nom: self.v[nom].get() for nom, _ in self.CASES})
         self.root.destroy()
 
 
 def run_correction_gui():
-    """Demande les paramètres puis corrige l'essai par l'état plat.
+    """Demande les paramètres puis apparie l'état plat avec la 1re image (Lp_final_corrige.npy).
 
     Renvoie l'objet Correction (bilan dans .bilan), ou None si annulé.
     """

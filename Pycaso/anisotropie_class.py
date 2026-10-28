@@ -93,12 +93,16 @@ class Anisotropie:
                  voisins=0,
                  masque="disque",
                  rayon_masque=1.0,
+                 seuil_aberrants=2.0,       # filtre des taches aberrantes (mm), 0 = aucun (voir Deformation)
+                 exclusions_manuelles=True, # retirer les taches exclues à la main (selection_gui)
                  # --- Niveaux ---
                  niveau_min=0.40,           # fraction du déplacement z max
                  niveau_max=0.80,
                  pas_niveau=0.01,
                  tolerance=0.05,            # demi-épaisseur (mm) de la bande gardée autour du niveau
                  inverser_z=None,           # None = auto (dôme vers le haut), True / False = forcé
+                 reference_deplacement=0,   # Uz = z − z(image de référence) ; source corrigée : 0 = état plat,
+                                            # 1 = état serré
                  # --- Résultats ---
                  tracer_ellipses=True,      # vue de dessus : points des niveaux et ellipses
                  tracer_surface=False,      # surface 3D avec les ellipses
@@ -114,15 +118,20 @@ class Anisotropie:
                                        taille_grille=taille_grille, interpolation=interpolation,
                                        fonction_rbf=fonction_rbf, lissage=lissage, voisins=voisins,
                                        masque=masque, rayon_masque=rayon_masque,
+                                       seuil_aberrants=seuil_aberrants,
+                                       exclusions_manuelles=exclusions_manuelles,
                                        inverser_z=False)      # le sens de z est géré ici (analyser)
         d = self.deformation
         self.date, self.dossier_essai, self.source = d.date, d.dossier_essai, d.source
         self.images = tuple(images)
         self.taille_grille, self.interpolation, self.fonction_rbf = d.taille_grille, d.interpolation, d.fonction_rbf
         self.lissage, self.voisins, self.masque, self.rayon_masque = d.lissage, d.voisins, d.masque, d.rayon_masque
+        self.seuil_aberrants = d.seuil_aberrants
+        self.exclusions_manuelles = d.exclusions_manuelles
         self.niveau_min, self.niveau_max, self.pas_niveau = niveau_min, niveau_max, pas_niveau
         self.tolerance = tolerance
         self.inverser_z = inverser_z
+        self.reference_deplacement = int(reference_deplacement)
         self.tracer_ellipses = tracer_ellipses
         self.tracer_surface = tracer_surface
         self.enregistrer_resultats = enregistrer_resultats
@@ -177,7 +186,10 @@ class Anisotropie:
         if self.enregistrer_resultats or self.enregistrer_figures:
             self.dossier_sortie.mkdir(parents=True, exist_ok=True)
 
-        r0 = d.interpoler(0)
+        ref = range(nb)[self.reference_deplacement]
+        r0 = d.interpoler(ref)
+        if ref:
+            print(f"Uz compté depuis l'image {ref}")
         self.resultats = {}
         for num in numeros:
             res = self.analyser(num, r0)
@@ -187,6 +199,7 @@ class Anisotropie:
             print(f"Image {num} : {len(t)} / {len(self.niveaux)} niveaux ajustés, "
                   f"b/a moyen = {np.mean(t[:, 4]) if len(t) else float('nan'):.3f}, pente = {pente}"
                   + ("  (z inversé)" if res["inverse"] else ""))
+            self.diagnostic(res)
             if self.enregistrer_resultats:
                 np.savetxt(self.dossier_sortie / f"ellipses_{num}.txt", t, fmt="%.6g",
                            header=" ".join(self.COLONNES))
@@ -209,7 +222,7 @@ class Anisotropie:
         d = self.deformation
         r = d.interpoler(num)
         if r0 is None:
-            r0 = d.interpoler(0)
+            r0 = d.interpoler(range(len(d.X))[self.reference_deplacement])
         dedans = d.grille["dedans"] & np.isfinite(r).all(axis=-1) & np.isfinite(r0).all(axis=-1)
         uz = r[..., 2] - r0[..., 2]
         inverse = self.inverser_z
@@ -238,6 +251,28 @@ class Anisotropie:
         return {"tableau": tableau, "pente": pente, "ordonnee": ordonnee, "inverse": inverse,
                 "zmax": zmax, "uz": uz, "r": r, "points": points}
 
+    def diagnostic(self, res):
+        """Explique dans le terminal pourquoi des niveaux n'ont pas pu être ajustés."""
+        uz, zmax = res["uz"], res["zmax"]
+        if not np.isfinite(zmax):
+            print("  ⚠ aucun point valide sur la grille (masque, NaN ?)")
+            return
+        p99 = np.nanpercentile(uz, 99)
+        nb_niv = len(self.niveaux)
+        if len(res["tableau"]) == nb_niv:
+            return
+        bandes = [int((np.abs(uz - p * zmax) <= self.tolerance).sum()) for p in self.niveaux]
+        print(f"  Uz max = {zmax:.3g} mm, 99e centile = {p99:.3g} mm, Uz min = {np.nanmin(uz):.3g} mm ; "
+              f"points par bande : min {min(bandes)}, médiane {int(np.median(bandes))}, max {max(bandes)}")
+        if zmax > 1.5 * p99 > 0:
+            print("  ⚠ Uz max est très au-dessus du 99e centile : pic isolé (tache aberrante ?). "
+                  "Baisser seuil_aberrants ou changer d'interpolation.")
+        elif zmax <= 0:
+            print("  ⚠ Uz max ≤ 0 : le dôme est vers le bas, essayer « Sens de z » = inverser.")
+        elif max(bandes) < 6:
+            print(f"  ⚠ bandes presque vides : tolérance ({self.tolerance:g} mm) trop petite pour "
+                  f"Uz max = {zmax:.3g} mm (Z encore 10× trop petit ?).")
+
     # ----- figures -----
 
     def _finir_figure(self, fig, nom):
@@ -265,7 +300,12 @@ class Anisotropie:
             ax1.scatter(t[:, 0], t[:, 4], c=coul, label=lib)
             ax2.scatter(t[:, 0], t[:, 5], c=coul, label=f"image {num}")
         ax1.set_xlabel("niveau (fraction de Uz max)"); ax1.set_ylabel("b / a")
-        ax1.set_title("Anisotropie des ellipses de niveau"); ax1.legend()
+        ax1.set_title("Anisotropie des ellipses de niveau")
+        if ax1.get_legend_handles_labels()[0]:
+            ax1.legend()
+        else:
+            ax1.text(0.5, 0.5, "aucune ellipse ajustée\n(voir le terminal)", ha="center", va="center",
+                     transform=ax1.transAxes)
         ax2.set_xlabel("niveau (fraction de Uz max)"); ax2.set_ylabel("angle du grand axe (°)")
         ax2.set_title("Orientation du grand axe / X"); ax2.set_ylim(-90, 90)
         fig.suptitle(f"{self.source} - {self.dossier_essai}")

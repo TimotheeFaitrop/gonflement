@@ -13,6 +13,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 from Pycaso.anisotropie_class import Anisotropie
+from Pycaso.correction_class import Correction
 from Pycaso.deformation_class import Deformation
 from Pycaso.reconstruction_class import Detect3D
 
@@ -162,6 +163,7 @@ class AnisotropieGUI:
     """Fenêtre de saisie des paramètres d'Anisotropie."""
 
     CASES = [
+        ("exclusions_manuelles", "Retirer les taches exclues à la main (outil de sélection)"),
         ("tracer_ellipses", "Tracer la vue de dessus (points des niveaux et ellipses)"),
         ("tracer_surface", "Tracer la surface 3D avec les ellipses"),
         ("enregistrer_resultats", "Enregistrer les ellipses (ellipses_<n>.txt)"),
@@ -217,6 +219,8 @@ class AnisotropieGUI:
             "voisins": tk.StringVar(value=str(a.voisins)),
             "masque": tk.StringVar(value=a.masque),
             "rayon_masque": tk.StringVar(value=f"{a.rayon_masque:g}"),
+            "seuil_aberrants": tk.StringVar(value=f"{a.seuil_aberrants:g}"),
+            "reference_deplacement": tk.StringVar(value=str(a.reference_deplacement)),
             "niveau_min": tk.StringVar(value=f"{a.niveau_min:g}"),
             "niveau_max": tk.StringVar(value=f"{a.niveau_max:g}"),
             "pas_niveau": tk.StringVar(value=f"{a.pas_niveau:g}"),
@@ -250,7 +254,7 @@ class AnisotropieGUI:
         ttk.Entry(ligne, textvariable=self.v["dossier_essai"], width=44).grid(row=0, column=0)
         ttk.Button(ligne, text="…", width=3, command=self._parcourir).grid(row=0, column=1, padx=(4, 0))
         ttk.Label(f, text="Reconstruction").grid(row=2, column=0, sticky="w", **pad)
-        self.cb_source = ttk.Combobox(f, textvariable=self.v["source"], state="readonly", width=14)
+        self.cb_source = ttk.Combobox(f, textvariable=self.v["source"], state="readonly", width=20)
         self.cb_source.grid(row=2, column=1, sticky="w", **pad)
         self.lbl_source = ttk.Label(f, wraplength=420, justify="left")
         self.lbl_source.grid(row=2, column=2, sticky="w", **pad)
@@ -303,6 +307,10 @@ class AnisotropieGUI:
         ttk.Label(lm, text="× demi-largeur de la zone initiale (disque)",
                   foreground="gray").grid(row=0, column=2, padx=(8, 0))
 
+        ttk.Label(f, text="Seuil des aberrants (mm)").grid(row=4, column=0, sticky="w", **pad)
+        ttk.Entry(f, textvariable=self.v["seuil_aberrants"], width=16).grid(row=4, column=1, sticky="w", **pad)
+        self._aide(f, "tache écartée si son déplacement s'écarte de plus de ce seuil de ses voisines ; 0 = aucun filtre", 4)
+
         # --- Niveaux ---
         f = self._bloc("Niveaux du déplacement z", 2)
         ttk.Label(f, text="Niveaux (fraction de Uz max)").grid(row=0, column=0, sticky="w", **pad)
@@ -320,6 +328,9 @@ class AnisotropieGUI:
         ttk.Combobox(f, textvariable=self.v["sens_z"], state="readonly", values=list(self.SENS),
                      width=22).grid(row=2, column=1, sticky="w", **pad)
         self._aide(f, "le dôme doit avoir un Uz positif", 2)
+        ttk.Label(f, text="Déplacements / image").grid(row=3, column=0, sticky="w", **pad)
+        ttk.Entry(f, textvariable=self.v["reference_deplacement"], width=16).grid(row=3, column=1, sticky="w", **pad)
+        self.lbl_reference = self._aide(f, "", 3)
 
         # --- Résultats ---
         f = self._bloc("Résultats", 3)
@@ -375,6 +386,12 @@ class AnisotropieGUI:
             self.lbl_source.configure(text=f"✘ aucune reconstruction dans {d.dossier_reconstruction} : "
                                            "lancer d'abord la reconstruction 3D", foreground=_ROUGE)
         sortie = d.dossier_essai and f"{d.dossier_essai}/{Anisotropie.SOUS_DOSSIER_SORTIE}/{d.source}"
+        if Correction.est_corrigee(d.dossier_entree):
+            self.lbl_reference.configure(text="source corrigée : 0 = état plat, 1 = état serré (début de l'essai)",
+                                         foreground=_VERT)
+        else:
+            self.lbl_reference.configure(text="image d'où sont comptés les déplacements (0 = première image)",
+                                         foreground="gray")
         self.lbl_sortie.configure(text=f"Résultats dans : {sortie}")
 
     def _maj_niveaux(self, *_):
@@ -432,6 +449,8 @@ class AnisotropieGUI:
         lissage = self._nombre("lissage", "Lissage", erreurs, float, 0)
         voisins = self._nombre("voisins", "Voisins", erreurs, int, 0)
         rayon = self._nombre("rayon_masque", "Rayon du masque", erreurs, float, 0, strict=True, defaut=1.0)
+        seuil_ab = self._nombre("seuil_aberrants", "Seuil des aberrants", erreurs, float, 0)
+        ref = self._nombre("reference_deplacement", "Image de référence des déplacements", erreurs, int)
         if self.v["interpolation"].get() == "rbf_polynome" and 0 < voisins < 10:
             erreurs.append("Voisins : 0 (toutes les taches) ou au moins 10")
         nmin = self._nombre("niveau_min", "Niveau de départ", erreurs, float, 0, strict=True, defaut=0.4)
@@ -454,7 +473,7 @@ class AnisotropieGUI:
             if infos is None:
                 erreurs.append(f"X3d.txt, Y3d.txt, Z3d.txt introuvables dans {d.dossier_entree}")
             else:
-                hors = [n for n in images if not -infos[0] <= n < infos[0]]
+                hors = [n for n in images + (ref,) if not -infos[0] <= n < infos[0]]
                 if hors:
                     erreurs.append(f"Images hors limites : {hors} "
                                    f"({infos[0]} images : 0 à {infos[0] - 1})")
@@ -471,6 +490,7 @@ class AnisotropieGUI:
                                   fonction_rbf=self.v["fonction_rbf"].get() or None,
                                   lissage=lissage, voisins=voisins,
                                   masque=self.v["masque"].get(), rayon_masque=rayon,
+                                  seuil_aberrants=seuil_ab, reference_deplacement=ref,
                                   niveau_min=nmin, niveau_max=nmax, pas_niveau=pas, tolerance=tol,
                                   inverser_z=self.SENS[self.v["sens_z"].get()],
                                   **{nom: self.v[nom].get() for nom, _ in self.CASES})

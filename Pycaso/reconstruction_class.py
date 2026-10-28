@@ -58,11 +58,15 @@ class Detect3D:
                  methode="Lagrange",        # "Lagrange", "Soloff" ou "Zernike"
                  degre=None,                # degré du polynôme ; None = valeur par défaut de la méthode
                  facteur_z=10.0,            # Z reconstruit × facteur (Z sorti 10× trop petit) ; 1 = brut
+                 etat_plat=True,           # True : lit Lp_final_corrige.npy (image 0 = état plat, voir
+                                            # correction_class) et écrit dans reconstruction/<tag>_corrige
                  # --- Figures ---
-                 images_a_tracer=(-1,),     # indices des images tracées (-1 = dernière)
-                 deplacement=True,          # tracer z - z(image 0) plutôt que z
+                 images_a_tracer=(-1,),     # images tracées : 0 = état plat (seulement avec etat_plat),
+                                            # 1..n = photos de l'essai, -1 = dernière
+                 deplacement=True,          # tracer z - z(image 0) plutôt que z (axe vertical fixé à -10..90 ;
+                                            # sinon axe vertical automatique)
                  inverser_z=True,           # changer le signe de Z (dôme vers le haut)
-                 seuil_aberrants=60.0,      # déplacement max (mm) affiché ; 0 = pas de filtre
+                 exclusions_manuelles=True, # ne pas tracer les taches exclues à la main (selection_gui)
                  couleurs_fixes=False,      # échelle de couleur fixe (sinon : min/max des données)
                  z_min=-10.0,               # bas de l'échelle fixe (mm), violet foncé
                  z_bleu=0.0,                # Z (mm) affiché en bleu
@@ -79,8 +83,9 @@ class Detect3D:
         self.images_a_tracer = tuple(images_a_tracer)
         self.deplacement = deplacement
         self.inverser_z = inverser_z
-        self.seuil_aberrants = seuil_aberrants
+        self.exclusions_manuelles = exclusions_manuelles
         self.facteur_z = facteur_z
+        self.etat_plat = etat_plat
         self.couleurs_fixes = couleurs_fixes
         self.z_min = z_min
         self.z_bleu = z_bleu
@@ -107,9 +112,14 @@ class Detect3D:
         """<essai>/appariemment_et_suivi : contient Lp_final.npy."""
         return Path(self.dossier_essai) / self.SOUS_DOSSIER_ENTREE
 
+    FICHIER_LP, FICHIER_LP_CORRIGE = "Lp_final.npy", "Lp_final_corrige.npy"
+    FICHIER_CORRECTION = "correction_infos.json"   # écrit par la correction ; recopié dans <tag>_corrige
+    SUFFIXE_CORRIGE = "_corrige"
+
     @property
     def fichier_Lp(self):
-        return self.dossier_entree / "Lp_final.npy"
+        """Lp_final.npy, ou Lp_final_corrige.npy si etat_plat (image 0 = état plat)."""
+        return self.dossier_entree / (self.FICHIER_LP_CORRIGE if self.etat_plat else self.FICHIER_LP)
 
     @property
     def tag(self):
@@ -118,8 +128,9 @@ class Detect3D:
 
     @property
     def dossier_sortie(self):
-        """<essai>/reconstruction/<tag> : un sous-dossier par méthode, pour ne pas les écraser."""
-        return Path(self.dossier_essai) / self.SOUS_DOSSIER_SORTIE / self.tag
+        """<essai>/reconstruction/<tag> (ou <tag>_corrige avec l'état plat) : un sous-dossier par méthode."""
+        return (Path(self.dossier_essai) / self.SOUS_DOSSIER_SORTIE
+                / (self.tag + (self.SUFFIXE_CORRIGE if self.etat_plat else "")))
 
     @property
     def dossier_mesure(self):
@@ -176,6 +187,9 @@ class Detect3D:
         Renvoie X, Y, Z : tableaux (images, points). Restent aussi en attributs.
         """
         if not self.fichier_Lp.is_file():
+            if self.etat_plat:
+                raise FileNotFoundError(f"{self.fichier_Lp} introuvable : lancer d'abord la correction par "
+                                        "l'état plat (ou décocher « état plat »).")
             raise FileNotFoundError(f"{self.fichier_Lp} introuvable : lancer d'abord la détection des taches "
                                     f"(Lp_final.npy attendu dans {self.dossier_entree}).")
         constantes = self.charger_constantes()
@@ -243,7 +257,14 @@ class Detect3D:
         # méthode et facteur Z utilisés : relus par la correction (reconstruction de l'état plat)
         with open(self.dossier_sortie / self.FICHIER_INFOS, "w", encoding="utf-8") as f:
             json.dump({"methode": self.methode, "degre": self.degre, "facteur_z": self.facteur_z,
-                       "etalonnage": str(self.dossier_constantes())}, f, indent=1, ensure_ascii=False)
+                       "etalonnage": str(self.dossier_constantes()), "etat_plat": bool(self.etat_plat)},
+                      f, indent=1, ensure_ascii=False)
+        marque = self.dossier_sortie / self.FICHIER_CORRECTION
+        if self.etat_plat:          # marque d'une source corrigée (lue par la déformation et l'anisotropie)
+            source = self.dossier_entree / self.FICHIER_CORRECTION
+            marque.write_text(source.read_text(encoding="utf-8") if source.is_file() else "{}", encoding="utf-8")
+        elif marque.is_file():
+            marque.unlink()
         print(f"X3d.txt, Y3d.txt, Z3d.txt enregistrés dans {self.dossier_sortie} "
               f"({self.X.shape[0]} images, {self.X.shape[1]} points)")
 
@@ -267,25 +288,40 @@ class Detect3D:
                                  lambda p: np.interp(p, ps, zs)),
                                 vmin=self.z_min, vmax=self.z_max)
 
-    def tracer(self, n):
-        """Nuage 3D de l'image n (-1 = dernière)."""
+    def ligne_image(self, n):
+        """Numéro d'image (0 = état plat, 1..n = photos de l'essai ; -1 = dernière) -> ligne de X, Y, Z."""
         nb = len(self.X)
-        num = range(nb)[n]                 # indice réel (gère les négatifs, IndexError si hors limites)
-        x, y, z = self.X[num], self.Y[num], self.Z[num]
+        if n < 0:
+            return range(nb)[n]
+        if not self.etat_plat:
+            if n == 0:
+                raise IndexError("Image 0 (état plat) : disponible seulement avec l'état plat")
+            n -= 1                                         # Lp_final.npy : ligne 0 = photo 1 de l'essai
+        return range(nb)[n]
+
+    def tracer(self, n):
+        """Nuage 3D de l'image n (0 = état plat, 1..n = photos de l'essai ; -1 = dernière)."""
+        ligne = self.ligne_image(n)
+        num = ligne if self.etat_plat else ligne + 1       # numéro affiché (titre, nom du fichier)
+        derniere = len(self.X) - 1 if self.etat_plat else len(self.X)
+        x, y, z = self.X[ligne], self.Y[ligne], self.Z[ligne]
         if self.deplacement:
             z = z - self.Z[0]              # nouveau tableau : self.Z reste intact
         if self.inverser_z:
             z = -z
         ok = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
-        if self.deplacement and self.seuil_aberrants:
-            ok &= np.abs(z) < self.seuil_aberrants      # écarte les points aberrants pour la figure
+        if self.exclusions_manuelles:                             # taches exclues à la main (selection_gui)
+            from Pycaso.selection_class import ExclusionsTaches
+            ok &= ~ExclusionsTaches(self.dossier_essai, self.dossier_sortie.name).masque_colonnes(len(x))
         x, y, z = x[ok], y[ok], z[ok]
 
         fig = plt.figure(figsize=(16, 9))
         ax = plt.axes(projection="3d")
         ax.grid(visible=True, color="grey", linestyle="-.", linewidth=0.3, alpha=0.2)
         ax.set_xlabel("X"); ax.set_ylabel("Y"); ax.set_zlabel("Z")
-        ax.set_xlim(-10,90);ax.set_ylim(-10,90);ax.set_zlim(-10,90)
+        ax.set_xlim(-10, 90); ax.set_ylim(-10, 90)
+        if self.deplacement:               # déplacement : axe vertical fixé ; position : automatique
+            ax.set_zlim(-10, 90)
         sctt = ax.scatter3D(x, y, z, alpha=0.8, c=z, cmap=plt.get_cmap("viridis"),
                             norm=self.norme_couleurs())
         ax.set_box_aspect((1, 1, 0.4))
@@ -294,7 +330,7 @@ class Detect3D:
         except NotImplementedError:        # anciennes versions de matplotlib
             pass
         quoi = "déplacement Z" if self.deplacement else "Z"
-        plt.title(f"{self.methode} {self.tag} - image {num} / {nb - 1} - {quoi} (mm), "
+        plt.title(f"{self.methode} {self.tag} - image {num} / {derniere} - {quoi} (mm), "
                   f"{ok.sum()} points")
         cbar = fig.colorbar(sctt, ax=ax, shrink=0.5, aspect=5,
                             extend="both" if self.couleurs_fixes else "neither")
@@ -302,7 +338,7 @@ class Detect3D:
             cbar.set_ticks([self.z_min, self.z_bleu, self.z_jaune, self.z_max])
             cbar.set_ticklabels([f"{v:g}" for v in (self.z_min, self.z_bleu, self.z_jaune, self.z_max)])
         if self.enregistrer_figures:
-            plt.savefig(self.dossier_sortie / f"Déplacement_{num}-{nb}.png")
+            plt.savefig(self.dossier_sortie / f"Déplacement_{num}-{derniere}.png")
         if self.afficher_figures:
             plt.show()
         plt.close(fig)

@@ -19,6 +19,7 @@ Organisation des dossiers (dossier_essai = <date>/essai1) :
 """
 import os
 import time
+import warnings
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -56,6 +57,8 @@ class Deformation:
     }
     MASQUES = ("disque", "enveloppe", "aucun")
 
+    VIGNETTES_PAR_LIGNE = 3
+    
     SOUS_DOSSIER_ENTREE = Detect3D.SOUS_DOSSIER_SORTIE    # "reconstruction"
     SOUS_DOSSIER_SORTIE = "deformation"
     FICHIERS = ("X3d.txt", "Y3d.txt", "Z3d.txt")
@@ -75,12 +78,18 @@ class Deformation:
                  masque="disque",           # "disque", "enveloppe" (des taches) ou "aucun"
                  rayon_masque=1.0,          # rayon du disque / demi-largeur de la zone initiale
                  inverser_z=None,           # changer le signe de Z : None = auto (dôme vers le haut), True / False
+                 exclusions_manuelles=True, # retirer les taches exclues à la main (selection_gui)
+                 seuil_aberrants=2.0,       # tache écartée si son déplacement s'écarte de plus de ce seuil (mm)
+                                            # de la médiane de ses voisines ; 0 = pas de filtre
                  # --- Images et figures ---
                  images=(-1,),              # indices des images traitées (-1 = dernière)
                  grandeurs=("F",),          # grandeurs tracées (clés de GRANDEURS)
                  composantes=("xx", "yy", "zz"),   # composantes tracées des tenseurs
                  nuage_3d=False,            # tracer aussi le nuage de points 3D
-                 nuage_deplacement=True,    # nuage 3D : tracer z − z(image 0) plutôt que z
+                 nuage_deplacement=True,    # nuage 3D : tracer z − z(image de référence) plutôt que z
+                 reference_deplacement=0,   # image de référence des déplacements U (et du nuage 3D) ;
+                                            # les déformations sont toujours calculées / image 0.
+                                            # Source corrigée : 0 = état plat, 1 = état serré
                  enregistrer_champs=True,   # champs_<n>.npz : tous les champs de l'image n
                  enregistrer_figures=True,  # figures en .png
                  afficher_figures=True):    # ouvrir les figures à l'écran
@@ -112,16 +121,20 @@ class Deformation:
         self.masque = masque
         self.rayon_masque = rayon_masque
         self.inverser_z = inverser_z
+        self.seuil_aberrants = seuil_aberrants
+        self.exclusions_manuelles = exclusions_manuelles
         self.images = tuple(images)
         self.grandeurs = tuple(grandeurs)
         self.composantes = tuple(composantes)
         self.nuage_3d = nuage_3d
         self.nuage_deplacement = nuage_deplacement
+        self.reference_deplacement = int(reference_deplacement)
         self.enregistrer_champs = enregistrer_champs
         self.enregistrer_figures = enregistrer_figures
         self.afficher_figures = afficher_figures
 
-    RESULTATS = ("X", "Y", "Z", "grille", "champs", "z_inverse")
+    RESULTATS = ("X", "Y", "Z", "grille", "champs", "z_inverse", "aberrants", "_r_ref")
+    VOISINES_ABERRANTS = 8          # nombre de taches voisines pour la médiane du filtre
 
     def parametres(self):
         """Paramètres sous forme de dictionnaire (pour affichage)."""
@@ -176,8 +189,12 @@ class Deformation:
         nb = len(self.X)
         numeros = list(dict.fromkeys(range(nb)[n] for n in self.images))   # sans doublon, dans l'ordre
         print(f"{nb} images dans {self.dossier_entree} ; traitées : {numeros}"
-              + ("  (Z inversé)" if self.z_inverse else ""))
+              + ("  (Z inversé)" if self.z_inverse else "")
+              + (f" ; déplacements / image {range(nb)[self.reference_deplacement]}"
+                 if self.reference_deplacement else ""))
         self.grille = self.construire_grille()
+        self._r_ref = (None, None)
+        range(nb)[self.reference_deplacement]       # IndexError si l'image de référence n'existe pas
         if self.enregistrer_champs or self.enregistrer_figures:
             self.dossier_sortie.mkdir(parents=True, exist_ok=True)
 
@@ -210,6 +227,12 @@ class Deformation:
         reconstruction (dôme vers le haut, Uz > 0).
         """
         self.X, self.Y, self.Z = (np.loadtxt(self.dossier_entree / f, ndmin=2) for f in self.FICHIERS)
+        if self.exclusions_manuelles:
+            from Pycaso.retouche_class import ExclusionsTaches
+            n = ExclusionsTaches(self.dossier_essai, self.source).appliquer(self.X, self.Y, self.Z)
+            if n:
+                print(f"Exclusions manuelles : {n} tache(s) retirée(s)")
+        self.filtrer_aberrants()
         inverse = self.inverser_z
         if inverse is None:
             dz = self.Z - self.Z[0]
@@ -218,6 +241,48 @@ class Deformation:
             self.Z = -self.Z
         self.z_inverse = inverse
         return self.X, self.Y, self.Z
+
+    def filtrer_aberrants(self):
+        """Met à NaN les taches aberrantes (souvent dues à Lagrange hors du volume étalonné).
+
+        Image 0 : tache écartée de toutes les images si son z s'écarte de plus de seuil_aberrants
+        de la médiane des z de ses voisines. Autres images : tache écartée de cette image si son
+        déplacement 3D s'écarte de plus de seuil_aberrants de la médiane des déplacements voisins.
+        Les voisines sont les VOISINES_ABERRANTS taches les plus proches dans l'image 0.
+        Renvoie (nb de taches écartées partout, nb total de (tache, image) écartés).
+        """
+        self.aberrants = (0, 0)
+        if not self.seuil_aberrants:
+            return self.aberrants
+        from scipy.spatial import cKDTree
+        X0, Y0, Z0 = self.X[0], self.Y[0], self.Z[0]
+        idx = np.nonzero(np.isfinite(X0) & np.isfinite(Y0) & np.isfinite(Z0))[0]
+        k = min(self.VOISINES_ABERRANTS, len(idx) - 1)
+        if k < 3:
+            return self.aberrants
+        _, nn = cKDTree(np.column_stack((X0[idx], Y0[idx]))).query(
+            np.column_stack((X0[idx], Y0[idx])), k=k + 1)
+        nn = nn[:, 1:]                                   # sans la tache elle-même
+
+        def ecart(v):                                    # v : (taches, composantes)
+            with np.errstate(invalid="ignore"), warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)     # voisines toutes NaN
+                return np.linalg.norm(v - np.nanmedian(v[nn], axis=1), axis=-1)
+
+        mauvais0 = idx[ecart(Z0[idx, None]) > self.seuil_aberrants]
+        self.X[:, mauvais0] = self.Y[:, mauvais0] = self.Z[:, mauvais0] = np.nan
+        total = len(mauvais0) * len(self.X)
+        for i in range(1, len(self.X)):
+            u = np.column_stack((self.X[i, idx] - X0[idx], self.Y[i, idx] - Y0[idx], self.Z[i, idx] - Z0[idx]))
+            mauvais = idx[ecart(u) > self.seuil_aberrants]
+            self.X[i, mauvais] = self.Y[i, mauvais] = self.Z[i, mauvais] = np.nan
+            total += len(mauvais)
+        self.aberrants = (len(mauvais0), total)
+        if total:
+            print(f"Filtre des aberrants (seuil {self.seuil_aberrants:g} mm) : {len(mauvais0)} tache(s) "
+                  f"écartée(s) dès l'image 0, {total - len(mauvais0) * len(self.X)} autre(s) "
+                  f"(tache, image) écartée(s)")
+        return self.aberrants
 
     # ----- grille -----
 
@@ -278,7 +343,10 @@ class Deformation:
         """Tous les champs de l'image num, sur la grille (NaN hors du masque)."""
         g = self.grille
         r = self.interpoler(num)              # positions actuelles r(X, Y)
-        r0 = r if num == 0 else self.interpoler(0)
+        ref = range(len(self.X))[self.reference_deplacement]
+        if getattr(self, "_r_ref", (None,))[0] != ref:          # positions de référence, calculées une fois
+            self._r_ref = (ref, r if num == ref else self.interpoler(ref))
+        r0 = self._r_ref[1]
 
         # F1 : dérivées de r par rapport à X (colonnes) et Y (lignes)
         drdX = np.gradient(r, g["dx"], axis=1)
@@ -325,7 +393,8 @@ class Deformation:
         plt.close(fig)
 
     def tracer(self, num, grandeur):
-        """Cartographie(s) d'une grandeur pour l'image num : une vignette par composante."""
+        """Cartographie(s) d'une grandeur pour l'image num : une vignette par composante,
+        au plus VIGNETTES_PAR_LIGNE par ligne."""
         nb = len(self.X)
         champ = self.champs[num][grandeur]
         titre, nature = self.GRANDEURS[grandeur]
@@ -339,14 +408,19 @@ class Deformation:
         if not vignettes:
             return
 
-        fig, axes = plt.subplots(1, len(vignettes), figsize=(5.5 * len(vignettes) + 1, 5.5),
+        nb_col = min(len(vignettes), self.VIGNETTES_PAR_LIGNE)
+        nb_lig = -(-len(vignettes) // nb_col)                  # division arrondie au-dessus
+        fig, axes = plt.subplots(nb_lig, nb_col, figsize=(5.5 * nb_col + 1, 5.5 * nb_lig),
                                  squeeze=False, layout="constrained")
-        for ax, (nom, carte) in zip(axes[0], vignettes):
+        axes = axes.ravel()
+        for ax, (nom, carte) in zip(axes, vignettes):
             im = ax.imshow(carte, extent=self.grille["etendue"], origin="upper", cmap="viridis")
             ax.set_title(nom)
             ax.set_xlabel("X (mm)"); ax.set_ylabel("Y (mm)")
             ax.set_aspect("equal")
             fig.colorbar(im, ax=ax, shrink=0.8)
+        for ax in axes[len(vignettes):]:                       # cases vides de la dernière ligne
+            ax.set_visible(False)
         fig.suptitle(f"{titre} - {self.source} - image {num} / {nb - 1}")
         self._finir_figure(fig, f"{grandeur}_{num}-{nb}.png")
 
@@ -355,7 +429,7 @@ class Deformation:
         nb = len(self.X)
         x, y, z = self.X[num], self.Y[num], self.Z[num]
         if self.nuage_deplacement:
-            z = z - self.Z[0]
+            z = z - self.Z[range(nb)[self.reference_deplacement]]
         ok = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
         fig = plt.figure(figsize=(16, 9))
         ax = plt.axes(projection="3d")
@@ -364,7 +438,8 @@ class Deformation:
         ax.set_xlabel("x (mm)", fontweight="bold")
         ax.set_ylabel("y (mm)", fontweight="bold")
         ax.set_zlabel("z (mm)", fontweight="bold")
-        quoi = "déplacement z" if self.nuage_deplacement else "z"
+        quoi = (f"déplacement z / image {range(nb)[self.reference_deplacement]}"
+                if self.nuage_deplacement else "z")
         plt.title(f"{self.source} - image {num} / {nb - 1} - {quoi} (mm)"
                   + (" - Z inversé" if self.z_inverse else ""))
         fig.colorbar(sctt, ax=ax, shrink=0.5, aspect=5)

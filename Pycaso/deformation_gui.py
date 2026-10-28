@@ -12,6 +12,7 @@ import re
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
+from Pycaso.correction_class import Correction
 from Pycaso.deformation_class import Deformation
 from Pycaso.reconstruction_class import Detect3D
 
@@ -161,8 +162,9 @@ class DeformationGUI:
     """Fenêtre de saisie des paramètres de Deformation."""
 
     CASES = [
+        ("exclusions_manuelles", "Retirer les taches exclues à la main (outil de sélection)"),
         ("nuage_3d", "Tracer aussi le nuage de points 3D"),
-        ("nuage_deplacement", "Nuage 3D : tracer le déplacement z − z(image 0) plutôt que z"),
+        ("nuage_deplacement", "Nuage 3D : tracer le déplacement z − z(image de référence) plutôt que z"),
         ("enregistrer_champs", "Enregistrer les champs calculés (champs_<n>.npz)"),
         ("enregistrer_figures", "Enregistrer les figures (.png dans le dossier des résultats)"),
         ("afficher_figures", "Afficher les figures à la fin"),
@@ -211,6 +213,8 @@ class DeformationGUI:
             "voisins": tk.StringVar(value=str(d.voisins)),
             "masque": tk.StringVar(value=d.masque),
             "rayon_masque": tk.StringVar(value=f"{d.rayon_masque:g}"),
+            "seuil_aberrants": tk.StringVar(value=f"{d.seuil_aberrants:g}"),
+            "reference_deplacement": tk.StringVar(value=str(d.reference_deplacement)),
             "images": tk.StringVar(value=_ecrire_images(d.images)),
             "sens_z": tk.StringVar(value=next(l for l, v in self.SENS.items() if v == d.inverser_z)),
         }
@@ -243,7 +247,7 @@ class DeformationGUI:
         ttk.Entry(ligne, textvariable=self.v["dossier_essai"], width=44).grid(row=0, column=0)
         ttk.Button(ligne, text="…", width=3, command=self._parcourir).grid(row=0, column=1, padx=(4, 0))
         ttk.Label(f, text="Reconstruction").grid(row=2, column=0, sticky="w", **pad)
-        self.cb_source = ttk.Combobox(f, textvariable=self.v["source"], state="readonly", width=14)
+        self.cb_source = ttk.Combobox(f, textvariable=self.v["source"], state="readonly", width=20)
         self.cb_source.grid(row=2, column=1, sticky="w", **pad)
         self.lbl_source = ttk.Label(f, wraplength=420, justify="left")
         self.lbl_source.grid(row=2, column=2, sticky="w", **pad)
@@ -289,6 +293,13 @@ class DeformationGUI:
         self.e_rayon.grid(row=0, column=1)
         ttk.Label(lm, text="× demi-largeur de la zone initiale (disque) ; hors masque : NaN",
                   foreground="gray").grid(row=0, column=2, padx=(8, 0))
+
+        ttk.Label(f, text="Seuil des aberrants (mm)").grid(row=5, column=0, sticky="w", **pad)
+        ttk.Entry(f, textvariable=self.v["seuil_aberrants"], width=16).grid(row=5, column=1, sticky="w", **pad)
+        self._aide(f, "tache écartée si son déplacement s'écarte de plus de ce seuil de ses voisines ; 0 = aucun filtre", 5)
+        ttk.Label(f, text="Déplacements / image").grid(row=6, column=0, sticky="w", **pad)
+        ttk.Entry(f, textvariable=self.v["reference_deplacement"], width=16).grid(row=6, column=1, sticky="w", **pad)
+        self.lbl_reference = self._aide(f, "", 6)
 
         ttk.Label(f, text="Sens de z").grid(row=4, column=0, sticky="w", **pad)
         ttk.Combobox(f, textvariable=self.v["sens_z"], state="readonly", values=list(self.SENS),
@@ -370,6 +381,12 @@ class DeformationGUI:
         else:
             self.lbl_source.configure(text=f"✘ aucune reconstruction dans {d.dossier_reconstruction} : "
                                            "lancer d'abord la reconstruction 3D", foreground=_ROUGE)
+        if Correction.est_corrigee(d.dossier_entree):
+            self.lbl_reference.configure(text="source corrigée : 0 = état plat, 1 = état serré (début de l'essai)",
+                                         foreground=_VERT)
+        else:
+            self.lbl_reference.configure(text="image d'où sont comptés les déplacements (0 = première image)",
+                                         foreground="gray")
         self.lbl_sortie.configure(text=f"Résultats dans : {d.dossier_sortie}")
 
     def _changer_interpolation(self, *_):
@@ -418,6 +435,8 @@ class DeformationGUI:
         lissage = self._nombre("lissage", "Lissage", erreurs, float, 0)
         voisins = self._nombre("voisins", "Voisins", erreurs, int, 0)
         rayon = self._nombre("rayon_masque", "Rayon du masque", erreurs, float, 0, strict=True, defaut=1.0)
+        seuil_ab = self._nombre("seuil_aberrants", "Seuil des aberrants", erreurs, float, 0)
+        ref = self._nombre("reference_deplacement", "Image de référence des déplacements", erreurs, int)
         if self.v["interpolation"].get() == "rbf_polynome" and 0 < voisins < 10:
             erreurs.append("Voisins : 0 (toutes les taches) ou au moins 10")
         try:
@@ -438,7 +457,7 @@ class DeformationGUI:
             if infos is None:
                 erreurs.append(f"X3d.txt, Y3d.txt, Z3d.txt introuvables dans {d.dossier_entree}")
             else:
-                hors = [n for n in images if not -infos[0] <= n < infos[0]]
+                hors = [n for n in images + (ref,) if not -infos[0] <= n < infos[0]]
                 if hors:
                     erreurs.append(f"Images hors limites : {hors} "
                                    f"({infos[0]} images : 0 à {infos[0] - 1})")
@@ -454,6 +473,7 @@ class DeformationGUI:
                                   fonction_rbf=self.v["fonction_rbf"].get() or None,
                                   lissage=lissage, voisins=voisins,
                                   masque=self.v["masque"].get(), rayon_masque=rayon,
+                                  seuil_aberrants=seuil_ab, reference_deplacement=ref,
                                   inverser_z=self.SENS[self.v["sens_z"].get()],
                                   images=images, grandeurs=grandeurs, composantes=composantes,
                                   **{nom: self.v[nom].get() for nom, _ in self.CASES})
