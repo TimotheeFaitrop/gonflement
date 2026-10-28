@@ -10,6 +10,7 @@ Organisation des dossiers (dossier_essai = <date>/essai1, choisi par l'utilisate
     <date>/Results_Calib/Lpform_4/                     étalonnage, cherché dans l'essai puis ses parents
 Les noms des sous-dossiers sont des constantes de la classe (SOUS_DOSSIER_*).
 """
+import json
 import os
 import re
 import sys
@@ -46,6 +47,7 @@ class Detect3D:
     # dossier où l'explorateur « … » de l'interface commence la recherche (absolu ou relatif au
     # dossier d'exécution ; "~" accepté). S'il n'existe pas, on remonte au premier parent existant.
     DOSSIER_PARCOURIR = "../../Expériences"
+    FICHIER_INFOS = "reconstruction_infos.json"   # méthode, degré, facteur Z de la reconstruction
     SOLOFF_METHODE = "curve_fit"          # méthode de résolution de Soloff_identification
 
     def __init__(self,
@@ -60,13 +62,13 @@ class Detect3D:
                  images_a_tracer=(-1,),     # indices des images tracées (-1 = dernière)
                  deplacement=True,          # tracer z - z(image 0) plutôt que z
                  inverser_z=True,           # changer le signe de Z (dôme vers le haut)
-                 seuil_aberrants=100.0,      # déplacement max (mm) affiché ; 0 = pas de filtre
+                 seuil_aberrants=60.0,      # déplacement max (mm) affiché ; 0 = pas de filtre
                  couleurs_fixes=False,      # échelle de couleur fixe (sinon : min/max des données)
                  z_min=-10.0,               # bas de l'échelle fixe (mm), violet foncé
                  z_bleu=0.0,                # Z (mm) affiché en bleu
                  z_jaune=60.0,              # Z (mm) affiché en jaune
                  z_max=100.0,               # haut de l'échelle fixe (mm), jaune vif
-                 enregistrer_figures=True,  # enregistrer les figures en .svg dans dossier_sortie
+                 enregistrer_figures=True,  # enregistrer les figures en .png dans dossier_sortie
                  afficher_figures=True):    # ouvrir les figures à l'écran
         if methode not in self.METHODES:
             raise ValueError(f"Méthode inconnue : {methode} (choix : {', '.join(self.METHODES)})")
@@ -238,6 +240,10 @@ class Detect3D:
         self.dossier_sortie.mkdir(parents=True, exist_ok=True)
         for nom, val in (("X3d", self.X), ("Y3d", self.Y), ("Z3d", self.Z)):
             np.savetxt(self.dossier_sortie / f"{nom}.txt", val)
+        # méthode et facteur Z utilisés : relus par la correction (reconstruction de l'état plat)
+        with open(self.dossier_sortie / self.FICHIER_INFOS, "w", encoding="utf-8") as f:
+            json.dump({"methode": self.methode, "degre": self.degre, "facteur_z": self.facteur_z,
+                       "etalonnage": str(self.dossier_constantes())}, f, indent=1, ensure_ascii=False)
         print(f"X3d.txt, Y3d.txt, Z3d.txt enregistrés dans {self.dossier_sortie} "
               f"({self.X.shape[0]} images, {self.X.shape[1]} points)")
 
@@ -296,7 +302,7 @@ class Detect3D:
             cbar.set_ticks([self.z_min, self.z_bleu, self.z_jaune, self.z_max])
             cbar.set_ticklabels([f"{v:g}" for v in (self.z_min, self.z_bleu, self.z_jaune, self.z_max)])
         if self.enregistrer_figures:
-            plt.savefig(self.dossier_sortie / f"Déplacement_{num}-{nb}.svg")
+            plt.savefig(self.dossier_sortie / f"Déplacement_{num}-{nb}.png")
         if self.afficher_figures:
             plt.show()
         plt.close(fig)
