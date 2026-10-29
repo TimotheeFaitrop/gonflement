@@ -72,6 +72,7 @@ class Application(Formulaire, tk.Tk):
         self.onglets.add(self.materiel, text="Matériel")
         self.maj_bandeau()
         self.protocol("WM_DELETE_WINDOW", self.quitter)
+        self.after(800, self._restes_au_demarrage)
         self.after(100, self._boucle)
 
     # ------------------------------------------------------------------ console
@@ -253,6 +254,20 @@ class Application(Formulaire, tk.Tk):
             if nos_scripts or exe.startswith("xiCamTool") or self._tient_les_cameras(pid, usb):
                 restes[pid] = cmd
         return restes
+
+    def _restes_au_demarrage(self):
+        """Un essai qui a planté peut laisser des processus qui gardent les caméras :
+        les rouvrir provoque alors une erreur, voire « Segmentation fault »."""
+        try:
+            restes = self.processus_restants()
+        except Exception:
+            return
+        if restes:
+            self.log(f"ATTENTION : {len(restes)} processus d'un essai ou d'une calibration "
+                     "précédents gardent encore les caméras ou le FT232R :", "alerte")
+            for pid, cmd in restes.items():
+                self.log(f"   {pid} : {cmd[:100]}", "alerte")
+            self.log("   → onglet Matériel, « Libérer les caméras » avant de relancer.", "alerte")
 
     def liberer_cameras(self, restes=None):
         """Arrête les processus qui gardent les caméras (SIGTERM, puis SIGKILL 2 s après)."""

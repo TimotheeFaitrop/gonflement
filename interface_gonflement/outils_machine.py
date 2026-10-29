@@ -72,10 +72,9 @@ def test_hauteur(sn_g, sn_d, expo_g, expo_d, port):
 
 
 def photo(sn_g, sn_d, expo_g, expo_d, dossier):
-    """Une photo avec chaque caméra (acquisition libre), en TIFF pleine résolution,
-    plus un aperçu PNG des deux côte à côte (affiché par l'interface)."""
+    """Une photo avec chaque caméra (acquisition libre), en TIFF pleine résolution.
+    L'interface les affiche directement (pas de fichier d'aperçu)."""
     import cv2
-    import numpy as np
     from pathlib import Path
     dossier = Path(dossier)
     dossier.mkdir(parents=True, exist_ok=True)
@@ -94,26 +93,13 @@ def photo(sn_g, sn_d, expo_g, expo_d, dossier):
             f = img.get_image_data_numpy()
             chemin = dossier / f"photo_{nom}_{heure}.tiff"
             cv2.imwrite(str(chemin), f)
-            print(f"PHOTO={chemin}", flush=True)
+            print(f"PHOTO={nom}|{chemin}", flush=True)
             vues.append(f)
         except Exception as e:
             print(f"Caméra {nom} ({sn}) : aucune image ({e})", flush=True)
             vues.append(None)
         finally:
             _fermer_camera(c)
-    cote = 520
-    planches = []
-    for nom, f in zip(("gauche", "droite"), vues):
-        v = np.zeros((cote, cote, 3), np.uint8)
-        if f is not None:
-            v = cv2.cvtColor(cv2.resize(f, (cote, cote), interpolation=cv2.INTER_AREA),
-                             cv2.COLOR_GRAY2BGR)
-        cv2.putText(v, nom if f is not None else f"{nom} : pas d'image", (12, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (80, 200, 80) if f is not None else (80, 80, 230), 2)
-        planches.append(v)
-    apercu_png = dossier / f"apercu_{heure}.png"
-    cv2.imwrite(str(apercu_png), np.hstack(planches))
-    print(f"APERCU={apercu_png}", flush=True)
     if any(v is None for v in vues):
         sys.exit(1)
 

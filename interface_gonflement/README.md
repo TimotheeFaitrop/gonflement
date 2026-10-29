@@ -63,6 +63,10 @@ consigne, mesure, commande, état) + `parametres_essai.json`.
 
 ## Onglet Calibration
 
+En haut, toujours visible : **dossier de calibration** (racine choisie en
+parcourant le PC, date, nom de l'essai, images pour le calcul). Tout va dans
+`<racine>/<date>/<nom>/` : `Mesure/` (images), `Photos/`, `results_calib/`.
+
 Mêmes paramètres et valeurs par défaut que les programmes du dépôt :
 
 1. **Réglage** : test hauteur (aperçu des deux caméras avec leur netteté en
@@ -70,7 +74,7 @@ Mêmes paramètres et valeurs par défaut que les programmes du dépôt :
    (Z = 70), changer l'origine Z (G92 : la position actuelle prend la valeur
    saisie, jusqu'à la prochaine prise d'origine G28), aperçu des deux caméras,
    **prendre une photo** avec chaque caméra (TIFF pleine résolution dans
-   `<racine>/<date>/<nom>/Photos`, aperçu affiché), test des caméras, aller à un Z.
+   `<racine>/<date>/<nom>/Photos`, affichées directement), test des caméras, aller à un Z.
 2. **Essai et plans z** : dossier racine (choisi en parcourant le PC), date
    (aujourd'hui), nom de l'essai (`Mvt_Rigide` comme `calib_crappy_V2`). Les images
    vont dans `<racine>/<date>/<nom>/Mesure` (puis `Mesure_00001`… s'il est déjà
@@ -78,8 +82,17 @@ Mêmes paramètres et valeurs par défaut que les programmes du dépôt :
    **Z départ, Z fin (incluse) et pas** : 70 → 32 par 2 = 20 plans, comme avant.
    « Images pour le calcul » suit ce dossier (modifiable pour un ancien essai) ;
    résultats dans `<racine>/<date>/<nom>/results_calib`.
-3. **Acquisition** (`calib_crappy_V2.py`) : expositions 28757 µs (gauche) et
-   41389 µs (droite), 1 + pas/0,6 s par plan, **graphe de la hauteur du plateau**
+3. **Acquisition en boucle fermée** (`sequence_calibration.py`) : origine (G28)
+   puis directement Z départ (plus de passage par Z = 70) ; pour chaque
+   plan, le plateau va à la hauteur, la position lue (M114.2) doit être atteinte
+   et stable pendant la « stabilisation » (1 s), puis les deux caméras sont
+   déclenchées et on attend les deux images avant le plan suivant. Les caméras
+   ne lisent une image qu'après une impulsion (plus de message xiAPI
+   « xiGetImage … Error:10 » en boucle pendant les déplacements). Corrige les
+   photos prises en mouvement de `calib_crappy_V2.py` (temps fixe par plan alors
+   que le premier trajet depuis Z = 70 peut durer 30 s). Hauteur lue au moment de
+   chaque photo dans `positions_photos.csv` et le document des hauteurs.
+   Expositions 28757 µs (gauche) et 41389 µs (droite), **graphe de la hauteur du plateau**
    (Grapher crappy, option). La mémoire USB des caméras est vérifiée avant le
    lancement (mot de passe sudo demandé si besoin, sans quoi les caméras ne
    renvoient aucune image) et le nombre d'images enregistrées est affiché à la
@@ -91,7 +104,7 @@ Mêmes paramètres et valeurs par défaut que les programmes du dépôt :
    format de la mire ChArUco (ancien « legacy » ou nouveau) est détecté sur les
    images et imposé à Pycaso, et les coins sont mis au format attendu. La console
    donne les coins détectés par image ; à la fin, une fenêtre affiche le nuage 3D
-   et l'erreur de rétroprojection (aussi en PNG dans `results_calib/`).
+   et l'erreur de rétroprojection. Figures enregistrées en **SVG** ; images en TIFF.
    Pycaso exige NumPy < 2.5.
 4. **Méthode** (`Pycaso/calibration_gui.py`) : Lagrange degré 4 / 10 itérations,
    Soloff 332 / 8, Zernike ordre 6 / 9 ; changer de méthode remet ces valeurs.
@@ -148,6 +161,7 @@ interface_gonflement/
   stereo_3d.py           stéréo-corrélation 3D Zernike/Lagrange temps réel
   simulation.py          débitmètre, ballon et banc stéréo simulés
   lancer_calibration.py  acquisition + calcul de calibration
+  sequence_calibration.py acquisition plan par plan en boucle fermée (plateau, FT232R, caméras)
   outils_machine.py      origine, aller à Z, aperçu, test caméras, débit à 0, ports
   reglages.py            valeurs par défaut, reglages_utilisateur.json
 ```

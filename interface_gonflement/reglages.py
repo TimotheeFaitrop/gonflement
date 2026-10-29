@@ -78,7 +78,8 @@ DEFAUTS = {
         "pas_z": 2.0,
         "z_fin": 32.0,                    # dernière hauteur photographiée (incluse)
         "nom_essai": "Mvt_Rigide",        # <racine>/<date>/<nom>/Mesure, comme calib_crappy_V2
-        "temps_plan": 0.0,                # s, 0 = calcul auto (comme calib_crappy_V2)
+        "stabilisation": 1.0,             # s immobile à la bonne hauteur avant la photo
+        "vitesse_plateau": 100.0,         # mm/min (G0 F, comme calib_crappy_V2)
         "expo_droite": 41389,
         "expo_gauche": 28757,
         "graphe_hauteur": True,           # Grapher de la position du plateau
@@ -169,3 +170,10 @@ def dossier_base_essai(cfg, date):
     if ess.get("dossier", "").strip():
         return Path(ess["dossier"].strip())
     return Path(cfg["materiel"]["dossier_racine"]) / date / ess["echantillon"]
+
+
+def duree_estimee(z_list, z_init=70.0, vitesse=100.0, stabilisation=1.0):
+    """Durée prévue (s) : trajets + stabilisation + ~0,5 s par photo."""
+    v = vitesse / 60.0
+    trajet = abs(z_list[0] - z_init) + sum(abs(b - a) for a, b in zip(z_list, z_list[1:]))
+    return trajet / v + len(z_list) * (stabilisation + 0.5)

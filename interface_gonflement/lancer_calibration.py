@@ -31,9 +31,23 @@ TABLEAU = "hauteurs_calibration.csv"      # même tableau, pour un tableur
 
 
 def temps_par_plan(cal):
-    """Même règle que calib_crappy_V2 : time_sync = int(1 + |pas| / 0.6)."""
-    t = float(cal["temps_plan"]) or int(1 + abs(float(cal["pas_z"])) / 0.6)
-    return max(t, 2.0)
+    """Durée moyenne d'un plan (s) : trajet d'un pas + stabilisation + photo."""
+    return abs(float(cal["pas_z"])) / (float(cal["vitesse_plateau"]) / 60) \
+        + float(cal["stabilisation"]) + 0.5
+
+
+def positions_lues(dossier):
+    """{plan: z lu au moment de la photo} depuis positions_photos.csv."""
+    from sequence_calibration import FICHIER_POSITIONS
+    f = Path(dossier) / FICHIER_POSITIONS
+    if not f.exists():
+        return {}
+    out = {}
+    for ligne in f.read_text().splitlines()[1:]:
+        champs = ligne.split(";")
+        if len(champs) >= 3:
+            out[int(champs[0])] = champs[2] or "?"
+    return out
 
 
 def ecrire_document(dossier, cfg, statut):
@@ -60,20 +74,23 @@ def ecrire_document(dossier, cfg, statut):
         f"Hauteur finale           : {n(cal['z_fin'])} mm",
         f"Nombre de plans          : {len(z)}",
         f"Plage couverte           : {z[0]} -> {z[-1]} mm ({n(abs(z[0] - z[-1]))} mm)",
-        f"Temps par plan           : {t:.0f} s (vitesse plateau 100 mm/min)",
+        f"Plateau                  : {n(cal['vitesse_plateau'])} mm/min, stabilisation "
+        f"{n(cal['stabilisation'])} s avant chaque photo (~{t:.1f} s par plan)",
         f"Exposition gauche/droite : {cal['expo_gauche']} / {cal['expo_droite']} µs",
         f"Caméras gauche/droite    : {mat['sn_gauche']} / {mat['sn_droite']}",
         "Mire ChArUco             : 12 x 12 carrés de 7.5 mm",
         "",
-        f"{'Plan':>4}  {'Z (mm)':>8}  {'Image gauche':<28}  Image droite",
-        f"{'-' * 4}  {'-' * 8}  {'-' * 28}  {'-' * 28}",
+        f"{'Plan':>4}  {'Z (mm)':>8}  {'Z lu':>9}  {'Image gauche':<28}  Image droite",
+        f"{'-' * 4}  {'-' * 8}  {'-' * 9}  {'-' * 28}  {'-' * 28}",
     ]
-    csv = ["plan;z_mm;image_gauche;image_droite"]
+    lus = positions_lues(dossier)
+    csv = ["plan;z_mm;z_lu_mm;image_gauche;image_droite"]
     for i, zi in enumerate(z):
         g = images["left"][i] if i < len(images["left"]) else "-"
         d = images["right"][i] if i < len(images["right"]) else "-"
-        lignes.append(f"{i + 1:>4}  {zi:>8}  {g:<28}  {d}")
-        csv.append(f"{i + 1};{zi};{g};{d}")
+        lu = lus.get(i + 1, "-")
+        lignes.append(f"{i + 1:>4}  {zi:>8}  {lu:>9}  {g:<28}  {d}")
+        csv.append(f"{i + 1};{zi};{lu};{g};{d}")
     if any(images.values()) and (len(images["left"]) != len(z) or len(images["right"]) != len(z)):
         lignes += ["", f"ATTENTION : {len(images['left'])} images à gauche et "
                        f"{len(images['right'])} à droite pour {len(z)} plans."]
@@ -102,8 +119,10 @@ def acquisition(cfg):
     dossier = dossier_unique(Path(mat["dossier_racine"]) / cal["date"] / cal["nom_essai"] / "Mesure")
     print(f"DOSSIER_CALIB={dossier.resolve()}", flush=True)
     ecrire_document(dossier, cfg, "acquisition en cours")
-    print(f"{len(z)} plans : {z[0]} -> {z[-1]} mm, {t_plan:.1f} s par plan "
-          f"(~{len(z) * t_plan / 60:.1f} min)", flush=True)
+    from sequence_calibration import duree_estimee
+    duree = duree_estimee(z, z[0], float(cal["vitesse_plateau"]), float(cal["stabilisation"]))
+    print(f"{len(z)} plans : {z[0]} -> {z[-1]} mm, photo après arrêt du plateau "
+          f"(~{duree / 60:.1f} min)", flush=True)
 
     if mat["simulation"]:
         import simulation
@@ -115,38 +134,39 @@ def acquisition(cfg):
     import crappy
     import ft232R  # noqa: F401  enregistre Ft232r
     import moteur  # noqa: F401  enregistre Printer
-    from calib_crappy_V2 import DualXiAPICamera
+    from sequence_calibration import SequenceurCalibration, bloc_cameras, enregistrer_plateau
 
     if not memoire_usb_liberee():
         print("ATTENTION : usbfs_memory_mb n'est pas à 0 : les caméras risquent de ne "
               "renvoyer aucune image (bouton « Libérer la mémoire USB »)", flush=True)
 
+    vitesse = float(cal["vitesse_plateau"])
     ftdi = crappy.blocks.IOBlock("Ft232r", cmd_labels=["cmd"], spam=False,
                                  direction=0b00000100, URL=mat["url_ftdi"])
-    cams = DualXiAPICamera(
+    cams = bloc_cameras(
         serial_right=mat["sn_droite"], serial_left=mat["sn_gauche"],
         save_folder_right=str(dossier / "video_extenso_right") + "/",
         save_folder_left=str(dossier / "video_extenso_left") + "/",
         exposure_right=int(cal["expo_droite"]), exposure_left=int(cal["expo_gauche"]),
-        # délai d'une image : un plan + 5 s (100 s dans calib_crappy_V2, ce qui
-        # bloquait le programme si une caméra ne recevait pas le déclenchement)
-        trigger="Hardware", timeout=int((t_plan + 5) * 1000))
-    mot = crappy.blocks.Machine([{"type": "Printer", "mode": "position",
+        trigger="Hardware", timeout=3000,
+        delai_ms=int(max(int(cal["expo_droite"]), int(cal["expo_gauche"])) / 1000) + 3000)
+    # origine (G28) puis directement à Z départ (moteur.Printer allait toujours à Z = 70)
+    enregistrer_plateau()
+    mot = crappy.blocks.Machine([{"type": "PlateauCalibration", "mode": "position",
                                   "cmd_label": "pos", "position_label": "position",
-                                  "speed": 100, "port": mat["port_imprimante"]}],
+                                  "speed": vitesse, "port": mat["port_imprimante"],
+                                  "z_init": z[0]}],
                                 freq=50)
-    gen_mot = crappy.blocks.Generator(
-        path=[{"type": "Constant", "value": zi, "condition": f"delay={t_plan}"}
-              for zi in z], cmd_label="pos")
-    # déclenchement 1 s avant la fin de chaque plan, quand le plateau est arrivé
-    gen_ft = crappy.blocks.Generator(
-        [{"type": "Cyclic", "value1": 0, "condition1": f"delay={t_plan - 1}",
-          "value2": 1, "condition2": "delay=1", "cycles": len(z)}],
-        cmd_label="cmd")
-    _BLOCS.extend([ftdi, cams, mot, gen_mot, gen_ft])
+    seq = SequenceurCalibration(z, dossier, z_init=z[0], vitesse=vitesse,
+                                stabilisation=float(cal["stabilisation"]),
+                                delai_image=max(int(cal["expo_droite"]), int(cal["expo_gauche"])) / 1e6 + 5)
+    _BLOCS.extend([ftdi, cams, mot, seq])
 
-    crappy.link(gen_ft, ftdi)
-    crappy.link(gen_mot, mot)
+    crappy.link(mot, seq)        # position lue (en premier : ordre attendu par le séquenceur)
+    crappy.link(cams, seq)       # une paire d'images enregistrée
+    crappy.link(seq, mot)        # consigne de hauteur
+    crappy.link(seq, ftdi)       # impulsion de déclenchement
+    crappy.link(seq, cams)       # « impulsion envoyée » : la caméra lit alors ses images
     if cal.get("graphe_hauteur", True):
         # comme calib_crappy_V2 : courbe de la hauteur du plateau pendant l'acquisition
         graph_mot = crappy.blocks.Grapher(("t(s)", "position"))
@@ -267,17 +287,38 @@ def forcer_format_mire(legacy):
         cv2.aruco.CharucoDetector.detectBoard = detect_board
 
 
-def figures_en_png():
-    """Pycaso enregistre l'erreur de rétroprojection en PDF : on en fait aussi un PNG,
-    que l'interface peut afficher."""
+FIGURES = {}       # figure SVG -> copie PNG temporaire (affichage dans l'interface)
+
+
+def figures_en_svg():
+    """Les figures que Pycaso enregistre en PNG (format par défaut, ex. Coord3D_Zernike)
+    sont enregistrées en SVG. L'erreur de rétroprojection (PDF chez Pycaso) reçoit
+    aussi une version SVG. Tk ne sait pas afficher le SVG : une copie PNG est faite
+    dans un dossier temporaire, hors des résultats, pour l'interface."""
+    import tempfile
     import matplotlib.pyplot as plt
     original = plt.savefig
+    tmp = Path(tempfile.mkdtemp(prefix="gonflement_figures_"))
 
     def savefig(nom, *a, **k):
-        original(nom, *a, **k)
-        if str(nom).lower().endswith(".pdf"):
+        p = Path(str(nom))
+        fmt = (k.get("format") or p.suffix.lstrip(".") or "png").lower()
+        if fmt == "png":
             k.pop("format", None)
-            original(str(nom)[:-4] + ".png", *a, **{**k, "dpi": 110})
+            k.pop("dpi", None)
+            p = p.with_suffix(".svg")
+            original(p, *a, format="svg", **k)
+        else:
+            original(nom, *a, **k)
+            if fmt != "pdf":
+                return
+            k.pop("format", None)
+            k.pop("dpi", None)
+            p = p.with_suffix(".svg")
+            original(p, *a, format="svg", **k)
+        copie = tmp / f"{len(FIGURES):03d}_{p.stem}.png"
+        original(copie, *a, format="png", **{**k, "dpi": 100})
+        FIGURES[str(p)] = str(copie)
     plt.savefig = savefig
 
 
@@ -326,7 +367,7 @@ def calcul(cfg):
     print(f"Mire au format {'ancien (legacy)' if legacy else 'nouveau'} : utilisé pour Pycaso",
           flush=True)
     forcer_format_mire(legacy)
-    figures_en_png()
+    figures_en_svg()
 
     params = {"date": cal["date"], "path_images": str(dossier),
               "z_list": np.asarray(z), "show_plot": bool(cal["afficher_3d"])}
@@ -344,14 +385,13 @@ def calcul(cfg):
         raise
     print(f"Résultats dans {Calibration.results_dir_for(dossier)}")
     resume_detection(resultats, len(z))
-    retro = sorted((resultats / "Pycaso_retroprojection_error").glob("*.png"),
-                   key=lambda p: p.stat().st_mtime)
-    figures = sorted(resultats.glob("3D_coordinates/*.png")) + retro[-1:]
+    retro = [f for f in FIGURES if "Retroprojection" in f]
+    figures = [f for f in FIGURES if "Coord3D" in f] + retro[-1:]
     if not retro:
         print("ATTENTION : pas de figure d'erreur de rétroprojection (« No iterations "
               "possible » : trop peu d'images utilisables).", flush=True)
     for f in figures:
-        print(f"FIGURE={f}", flush=True)
+        print(f"FIGURE={FIGURES[f]}|{f}", flush=True)   # aperçu PNG | fichier SVG
     doc = dossier / DOCUMENT
     if doc.exists():
         with open(doc, "a", encoding="utf-8") as f:

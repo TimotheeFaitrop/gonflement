@@ -1,8 +1,9 @@
 """Onglet Calibration : reprend les programmes du dépôt.
 
   1. Réglage       test hauteur 20 -> 120 mm, début d'essai (Z = 70), origine (G92), photos
-  2. Essai, plans  champs de Pycaso/calibration_gui.py (date, dossier, z départ, pas, nb plans)
-  3. Acquisition   calib_crappy_V2.py (expositions 41389 / 28757 µs, déclenchement matériel)
+  En haut         dossier racine, date, nom de l'essai (toujours visibles)
+  2. Plans z       Z départ, Z fin, pas
+  3. Acquisition   en boucle fermée : photo une fois le plateau arrivé (sequence_calibration.py)
   4. Méthode       Pycaso/calibration_gui.py (Lagrange 4 / 10 it., Soloff 332 / 8, Zernike 6 / 9)
 """
 
@@ -33,12 +34,16 @@ class OngletCalibration(ttk.Frame):
     def __init__(self, parent, app):
         super().__init__(parent)
         self.app = a = app
+        # chemin de la calibration : bandeau fixe en haut de l'onglet (toujours visible)
+        haut = ttk.LabelFrame(self, text="Dossier de calibration", padding=(4, 4))
+        haut.pack(side="top", fill="x", padx=8, pady=(6, 2))
+        self.dossier(haut)
         col = CadreDefilant(self, largeur=680, fond=a.P["fond"])
         col.pack(side="left", fill="both", expand=True)
         g = col.interieur
         self.reglage(a.cadre(g, "1. Réglage du plateau et des caméras"))
-        self.essai_plans(a.cadre(g, "2. Essai et plans z (mm)"))
-        self.acquisition(a.cadre(g, "3. Acquisition des images (calib_crappy_V2)"))
+        self.plans(a.cadre(g, "2. Plans z (mm)"))
+        self.acquisition(a.cadre(g, "3. Acquisition des images (plan par plan)"))
         self.methode(a.cadre(g, "4. Méthode et calcul (Pycaso)"))
 
     # ----------------------------------------------------------------- 1
@@ -108,15 +113,15 @@ class OngletCalibration(ttk.Frame):
         if a.reglages["materiel"]["simulation"]:
             return a.log("[simulation] Prendre une photo : pas de caméra", "alerte")
         dossier = a.chemin(self._chemin_auto()).parent / "Photos"
-        apercu = []
+        photos = {}
 
         def sur_ligne(l):
-            if l.startswith("APERCU="):
-                apercu.append(l.split("=", 1)[1])
+            if l.startswith("PHOTO="):
+                nom, chemin = l.split("=", 1)[1].split("|", 1)
+                photos[nom] = chemin
 
         def fin(code):
-            if apercu:
-                self._montrer_photo(apercu[-1])
+            self._montrer_photo(photos, dossier)
 
         a.preparer_cameras(lambda: a.lancer(
             "Photo des caméras", [a.python(), "-u", str(a.ICI / "outils_machine.py"), "photo",
@@ -125,21 +130,52 @@ class OngletCalibration(ttk.Frame):
                                   a.v("calibration.expo_droite").get(), str(dossier)],
             sur_ligne=sur_ligne, sur_fin=fin))
 
-    def _montrer_photo(self, png):
-        fen = tk.Toplevel(self)
-        fen.title(f"Photos — {Path(png).parent}")
-        fen.configure(bg=self.app.P["fond"])
+    @staticmethod
+    def _vignette(chemin, cote):
+        """Image Tk réduite à partir d'un TIFF (Pillow) ou d'un PNG (Tk)."""
         try:
-            img = tk.PhotoImage(file=png)
-        except tk.TclError as e:
-            fen.destroy()
-            return self.app.log(f"Aperçu illisible : {e}", "erreur")
-        lbl = tk.Label(fen, image=img, bg=self.app.P["fond"])
-        lbl.image = img
-        lbl.pack(padx=8, pady=8)
-        ttk.Label(fen, text=f"TIFF pleine résolution dans {Path(png).parent}",
+            from PIL import Image, ImageTk
+            im = Image.open(chemin)
+            if im.mode not in ("L", "RGB"):
+                im = im.convert("L")
+            im.thumbnail((cote, cote))
+            return ImageTk.PhotoImage(im)
+        except ImportError:
+            img = tk.PhotoImage(file=chemin)        # PNG / GIF seulement
+            while img.width() > cote:
+                img = img.subsample(2)
+            return img
+
+    def _montrer_photo(self, photos, dossier):
+        """Les deux photos TIFF côte à côte ; « pas d'image » si une caméra n'a pas répondu."""
+        P = self.app.P
+        fen = tk.Toplevel(self)
+        fen.title(f"Photos — {dossier}")
+        fen.configure(bg=P["fond"])
+        ligne = tk.Frame(fen, bg=P["fond"])
+        ligne.pack(padx=8, pady=8)
+        for nom in ("gauche", "droite"):
+            cadre = tk.Frame(ligne, bg=P["fond"])
+            cadre.pack(side="left", padx=4)
+            img = None
+            if nom in photos:
+                try:
+                    img = self._vignette(photos[nom], 520)
+                except Exception as e:
+                    self.app.log(f"Photo {nom} illisible : {e}", "erreur")
+            if img is not None:
+                lbl = tk.Label(cadre, image=img, bg=P["fond"])
+                lbl.image = img
+                legende = Path(photos[nom]).name
+            else:
+                lbl = tk.Label(cadre, text=f"caméra {nom} :\npas d'image", width=40, height=18,
+                               bg=P["panneau"], fg=P["rouge"])
+                legende = ""
+            lbl.pack()
+            ttk.Label(cadre, text=f"{nom}  {legende}", style="Petit.TLabel").pack()
+        ttk.Label(fen, text=f"TIFF pleine résolution dans {dossier}",
                   style="Petit.TLabel").pack(pady=(0, 6))
-        ttk.Button(fen, text="Ouvrir le dossier", command=lambda: self.app.ouvrir(Path(png).parent)
+        ttk.Button(fen, text="Ouvrir le dossier", command=lambda: self.app.ouvrir(dossier)
                    ).pack(pady=(0, 8))
 
     def aller_z(self):
@@ -151,29 +187,22 @@ class OngletCalibration(ttk.Frame):
                        self.app.v("materiel.port_imprimante").get(), z, *extra)
 
     # ----------------------------------------------------------------- 2
-    def essai_plans(self, f):
+    def dossier(self, f):
+        """Racine / date / nom de l'essai -> <racine>/<date>/<nom>/Mesure (images),
+        Photos (photos de réglage) et results_calib (calcul)."""
         a = self.app
         a.v("calibration.date").set(time.strftime("%Y_%m_%d"))   # aujourd'hui, comme l'original
-        a.chemin_choisi(f, 0, "Dossier racine", "materiel.dossier_racine", dossier=True, largeur=44)
-        a.champ(f, 1, "Date (AAAA_MM_JJ)", "calibration.date", largeur=14)
-        a.champ(f, 2, "Nom de l'essai", "calibration.nom_essai", largeur=24,
-                aide="Sous-dossier créé dans <racine>/<date>/ (Mvt_Rigide dans calib_crappy_V2)")
-        self.lbl_cible = a.note(f, 3, "", 620)
-
+        a.chemin_choisi(f, 0, "Dossier racine", "materiel.dossier_racine", dossier=True, largeur=60)
         ligne = ttk.Frame(f)
-        ligne.grid(row=4, column=0, columnspan=4, sticky="w", padx=4, pady=4)
-        for txt, cle in (("Z départ", "z_depart"), ("Z fin", "z_fin"), ("pas", "pas_z")):
-            ttk.Label(ligne, text=txt).pack(side="left", padx=(8, 4))
-            ttk.Entry(ligne, textvariable=a.v(f"calibration.{cle}"), width=7).pack(side="left")
-        ttk.Label(ligne, text="mm", style="Petit.TLabel").pack(side="left", padx=4)
-        self.lbl_plans = a.note(f, 5, "", 620)
-        for k in ("z_depart", "z_fin", "pas_z", "temps_plan"):
-            a.v(f"calibration.{k}").trace_add("write", lambda *_: self.maj_plans())
-
-        ttk.Separator(f).grid(row=6, column=0, columnspan=4, sticky="ew", pady=6)
-        a.chemin_choisi(f, 7, "Images pour le calcul", "calibration.dossier_images",
-                        dossier=True, largeur=44)
-        self.lbl_resultats = a.note(f, 8, "", 620)
+        ligne.grid(row=1, column=0, columnspan=4, sticky="w", padx=4, pady=3)
+        ttk.Label(ligne, text="Date (AAAA_MM_JJ)").pack(side="left", padx=(4, 6))
+        ttk.Entry(ligne, textvariable=a.v("calibration.date"), width=12).pack(side="left")
+        ttk.Label(ligne, text="Nom de l'essai").pack(side="left", padx=(18, 6))
+        ttk.Entry(ligne, textvariable=a.v("calibration.nom_essai"), width=22).pack(side="left")
+        self.lbl_cible = a.note(f, 2, "", 1100)
+        a.chemin_choisi(f, 3, "Images pour le calcul", "calibration.dossier_images",
+                        dossier=True, largeur=60)
+        self.lbl_resultats = a.note(f, 4, "", 1100)
         # le dossier du calcul suit racine / date / nom tant qu'il n'a pas été modifié à la main
         self.auto = self._chemin_auto()
         memo = a.v("calibration.dossier_images").get().strip()
@@ -183,6 +212,19 @@ class OngletCalibration(ttk.Frame):
             a.v(cle).trace_add("write", lambda *_: self._suivre_date())
         a.v("calibration.dossier_images").trace_add("write", lambda *_: self._maj_resultats())
         self._maj_resultats()
+
+    # ----------------------------------------------------------------- 2
+    def plans(self, f):
+        a = self.app
+        ligne = ttk.Frame(f)
+        ligne.grid(row=0, column=0, columnspan=4, sticky="w", padx=4, pady=4)
+        for txt, cle in (("Z départ", "z_depart"), ("Z fin", "z_fin"), ("pas", "pas_z")):
+            ttk.Label(ligne, text=txt).pack(side="left", padx=(8, 4))
+            ttk.Entry(ligne, textvariable=a.v(f"calibration.{cle}"), width=7).pack(side="left")
+        ttk.Label(ligne, text="mm", style="Petit.TLabel").pack(side="left", padx=4)
+        self.lbl_plans = a.note(f, 1, "", 620)
+        for k in ("z_depart", "z_fin", "pas_z", "stabilisation", "vitesse_plateau"):
+            a.v(f"calibration.{k}").trace_add("write", lambda *_: self.maj_plans())
 
     def _chemin_auto(self):
         a = self.app
@@ -198,8 +240,9 @@ class OngletCalibration(ttk.Frame):
             self.auto = self._chemin_auto()
 
     def _maj_resultats(self):
-        self.lbl_cible.configure(text=f"Acquisition dans : {self.app.chemin(self._chemin_auto())}"
-                                      "  (puis Mesure_00001… s'il est déjà rempli)")
+        base = self.app.chemin(self._chemin_auto())
+        self.lbl_cible.configure(text=f"Acquisition dans : {base}  (puis Mesure_00001… s'il est "
+                                      f"déjà rempli) — photos de réglage dans {base.parent / 'Photos'}")
         p = self.app.v("calibration.dossier_images").get().strip()
         self.lbl_resultats.configure(
             text=f"Résultats dans {Path(p).parent / 'results_calib'}" if p else "Résultats dans —")
@@ -207,39 +250,43 @@ class OngletCalibration(ttk.Frame):
     def maj_plans(self):
         a = self.app
         z0, z1 = a.nombre("calibration.z_depart"), a.nombre("calibration.z_fin")
-        pas, t = a.nombre("calibration.pas_z"), a.nombre("calibration.temps_plan")
-        if None in (z0, z1, pas, t) or pas == 0:
+        pas, stab = a.nombre("calibration.pas_z"), a.nombre("calibration.stabilisation")
+        v = a.nombre("calibration.vitesse_plateau")
+        if None in (z0, z1, pas, stab, v) or pas == 0 or v <= 0:
             return self.lbl_plans.configure(text="valeurs invalides")
         z = rg.z_liste(z0, z1, pas)
         n = len(z)
-        t = max(t or int(1 + abs(pas) / 0.6), 2)
+        duree = rg.duree_estimee(z, z[0], v, stab)
         reste = "" if z[-1] == z1 else f" (Z fin {z1:g} non atteint avec ce pas)"
         self.lbl_plans.configure(text=f"{n} plans : {', '.join(map(str, z[:4]))}"
                                       f"{', …' if n > 5 else ''}{', ' + str(z[-1]) if n > 4 else ''}"
-                                      f"{reste} — {t:.0f} s par plan, environ {n * t / 60:.1f} min")
+                                      f"{reste} — environ {duree / 60:.1f} min (origine puis Z = {z[0]:g})")
 
     # ----------------------------------------------------------------- 3
     def acquisition(self, f):
         a = self.app
         a.champ(f, 0, "Exposition gauche", "calibration.expo_gauche", "µs")
         a.champ(f, 1, "Exposition droite", "calibration.expo_droite", "µs")
-        a.champ(f, 2, "Temps par plan", "calibration.temps_plan", "s (0 = 1 + pas/0,6)",
-                aide="calib_crappy_V2 : time_sync = int(1 + |pas| / 0.6), soit 4 s pour 2 mm ; "
-                     "les caméras sont déclenchées dans la dernière seconde")
-        a.case(f, 3, "Afficher le graphe de la hauteur du plateau (Grapher crappy)",
+        a.champ(f, 2, "Stabilisation avant photo", "calibration.stabilisation", "s",
+                aide="Temps pendant lequel le plateau doit rester à la bonne hauteur "
+                     "(position lue) avant le déclenchement des caméras")
+        a.case(f, 5, "Afficher le graphe de la hauteur du plateau (Grapher crappy)",
                "calibration.graphe_hauteur")
-        a.note(f, 4, "Le plateau part de Z = 70 (Printer.open), puis va de plan en plan à "
-                     "100 mm/min ; les deux caméras sont déclenchées une fois le plateau arrivé.", 620)
+        a.champ(f, 4, "Vitesse du plateau", "calibration.vitesse_plateau", "mm/min")
+        a.note(f, 7, "Plan par plan : le plateau va à la hauteur, la position lue doit être "
+                     "atteinte et stable, puis les deux caméras sont déclenchées ; on attend "
+                     "les deux images avant le plan suivant. La hauteur lue au moment de chaque "
+                     "photo est notée (positions_photos.csv et document des hauteurs).", 620)
         self.maj_plans()
         b = ttk.Frame(f)
-        b.grid(row=5, column=0, columnspan=4, sticky="w", padx=4, pady=6)
+        b.grid(row=6, column=0, columnspan=4, sticky="w", padx=4, pady=6)
         ttk.Button(b, text="▶  Lancer l'acquisition", style="Go.TButton",
                    command=self.lancer_acquisition).pack(side="left", padx=3)
         ttk.Button(b, text="Écrire le document des hauteurs", command=self.document
                    ).pack(side="left", padx=3)
         ttk.Button(b, text="Ouvrir le document", command=self.ouvrir_document
                    ).pack(side="left", padx=3)
-        a.note(f, 6, "Le document hauteurs_calibration.txt (et .csv) est écrit "
+        a.note(f, 8, "Le document hauteurs_calibration.txt (et .csv) est écrit "
                      "automatiquement dans le dossier images calib à chaque acquisition : "
                      "hauteur de départ, pas, hauteur de chaque plan et images prises.", 620)
 
@@ -366,18 +413,17 @@ class OngletCalibration(ttk.Frame):
         ligne = tk.Frame(fen, bg=self.app.P["fond"])
         ligne.pack(padx=8, pady=8)
         for f in figures:
+            apercu, _, svg = f.partition("|")       # copie PNG temporaire | fichier SVG enregistré
             try:
-                img = tk.PhotoImage(file=f)
-            except tk.TclError:
+                img = self._vignette(apercu, 700)
+            except Exception:
                 continue
-            while img.width() > 700:            # réduit les grandes figures
-                img = img.subsample(2)
             cadre = tk.Frame(ligne, bg=self.app.P["fond"])
             cadre.pack(side="left", padx=4)
             lbl = tk.Label(cadre, image=img, bg="white")
             lbl.image = img
             lbl.pack()
-            ttk.Label(cadre, text=Path(f).name, style="Petit.TLabel").pack()
+            ttk.Label(cadre, text=Path(svg or apercu).name, style="Petit.TLabel").pack()
         ttk.Button(fen, text="Ouvrir le dossier des résultats",
                    command=lambda: self.app.ouvrir(dossier)).pack(pady=(0, 8))
 
