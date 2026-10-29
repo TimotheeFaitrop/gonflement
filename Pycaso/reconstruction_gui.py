@@ -211,7 +211,7 @@ class Detect3DGUI:
             "z_jaune": tk.StringVar(value=f"{defaut.z_jaune:g}"),
             "z_max": tk.StringVar(value=f"{defaut.z_max:g}"),
             "etat_plat": tk.BooleanVar(value=bool(defaut.etat_plat)),
-            "deplacement": tk.BooleanVar(value=bool(defaut.deplacement)),
+            "affichage_z": tk.StringVar(value=defaut.affichage_z),
         }
         for nom, _ in self.CASES:
             self.v[nom] = tk.BooleanVar(value=bool(getattr(defaut, nom)))
@@ -237,9 +237,12 @@ class Detect3DGUI:
         self.case_plat = ttk.Checkbutton(f, text="Utiliser l'état initial à partir des photos non flambées",
                                          variable=self.v["etat_plat"], command=self._maj)
         self.case_plat.grid(row=2, column=0, columnspan=3, sticky="w", **pad)
-        ttk.Checkbutton(f, text="Tracer le déplacement z − z(image 0) plutôt que la position z "
-                                "(décoché : axe vertical automatique)",
-                        variable=self.v["deplacement"]).grid(row=3, column=0, columnspan=3, sticky="w", **pad)
+        lz = ttk.Frame(f)
+        lz.grid(row=3, column=0, columnspan=3, sticky="w", **pad)
+        ttk.Label(lz, text="Axe vertical des figures :").grid(row=0, column=0, sticky="w")
+        for i, (cle, lib) in enumerate(Detect3D.AFFICHAGES_Z.items(), start=1):
+            ttk.Radiobutton(lz, text=lib + (" (axe automatique)" if cle == "position" else ""),
+                            value=cle, variable=self.v["affichage_z"]).grid(row=i, column=0, sticky="w", padx=(16, 0))
         self.lbl_Lp = ttk.Label(f, wraplength=520, justify="left")
         self.lbl_Lp.grid(row=4, column=0, columnspan=3, sticky="w", **pad)
         self.lbl_sortie = ttk.Label(f, foreground="gray", wraplength=520)
@@ -443,7 +446,7 @@ class Detect3DGUI:
                                images_a_tracer=images,
                                facteur_z=facteur_z, couleurs_fixes=self.v["couleurs_fixes"].get(),
                                etat_plat=self.v["etat_plat"].get(),
-                               deplacement=self.v["deplacement"].get(),
+                               affichage_z=self.v["affichage_z"].get(),
                                **echelle,
                                **{nom: self.v[nom].get() for nom, _ in self.CASES})
         self.root.destroy()

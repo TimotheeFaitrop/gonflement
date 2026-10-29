@@ -63,8 +63,9 @@ class Detect3D:
                  # --- Figures ---
                  images_a_tracer=(-1,),     # images tracées : 0 = état plat (seulement avec etat_plat),
                                             # 1..n = photos de l'essai, -1 = dernière
-                 deplacement=True,          # tracer z - z(image 0) plutôt que z (axe vertical fixé à -10..90 ;
-                                            # sinon axe vertical automatique)
+                 affichage_z="plan",        # axe vertical des figures (voir AFFICHAGES_Z) :
+                                            # "position" (z brut, axe automatique), "plan" (z − plan médian
+                                            # de l'image 0) ou "deplacement" (z − z de chaque tache à l'image 0)
                  inverser_z=True,           # changer le signe de Z (dôme vers le haut)
                  exclusions_manuelles=True, # ne pas tracer les taches exclues à la main (retouche_gui)
                  couleurs_fixes=False,      # échelle de couleur fixe (sinon : min/max des données)
@@ -81,7 +82,9 @@ class Detect3D:
         self.methode = methode
         self.degre = self.METHODES[methode][2] if degre is None else degre
         self.images_a_tracer = tuple(images_a_tracer)
-        self.deplacement = deplacement
+        if affichage_z not in self.AFFICHAGES_Z:
+            raise ValueError(f"affichage_z : {', '.join(self.AFFICHAGES_Z)} (pas {affichage_z})")
+        self.affichage_z = affichage_z
         self.inverser_z = inverser_z
         self.exclusions_manuelles = exclusions_manuelles
         self.facteur_z = facteur_z
@@ -95,6 +98,12 @@ class Detect3D:
         self.afficher_figures = afficher_figures
 
     RESULTATS = ("X", "Y", "Z")
+    # affichage de l'axe vertical : libellé (figures et interface)
+    AFFICHAGES_Z = {
+        "position": "position z non corrigée",
+        "plan": "position z corrigée par le plan médian de l'image 0 (état plat s'il existe, sinon 1re image flambée)",
+        "deplacement": "déplacement par rapport au z de chaque tache à l'image 0",
+    }
 
     def parametres(self):
         """Paramètres sous forme de dictionnaire (pour affichage)."""
@@ -299,14 +308,44 @@ class Detect3D:
             n -= 1                                         # Lp_final.npy : ligne 0 = photo 1 de l'essai
         return range(nb)[n]
 
+    def plan_reference(self):
+        """Plan médian des taches de l'image 0 : coefficients (a, b, c) de z = a + b x + c y.
+
+        Ajusté par moindres carrés sur les taches valides et non exclues, en écartant à chaque passe
+        celles à plus de 5 écarts robustes (médiane des écarts absolus) du plan : une tache aberrante
+        ne le fait ni monter ni pencher. Image 0 = état plat (source corrigée), sinon 1re image flambée.
+        """
+        x, y, z = self.X[0], self.Y[0], self.Z[0]
+        ok = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
+        if self.exclusions_manuelles:
+            from Pycaso.retouche_class import ExclusionsTaches
+            ok &= ~ExclusionsTaches(self.dossier_essai, self.dossier_sortie.name).masque_colonnes(len(x))
+        if ok.sum() < 3:
+            return np.array([np.nanmedian(z) if np.isfinite(z).any() else 0.0, 0.0, 0.0])
+        A = np.column_stack((np.ones(ok.sum()), x[ok], y[ok]))
+        zz = z[ok]
+        garde = np.ones(len(zz), dtype=bool)
+        for _ in range(10):
+            coef = np.linalg.lstsq(A[garde], zz[garde], rcond=None)[0]
+            r = zz - A @ coef
+            ecart = 1.4826 * np.median(np.abs(r[garde]))
+            nouveau = np.abs(r) <= max(5 * ecart, 1e-9)
+            if np.array_equal(nouveau, garde) or nouveau.sum() < 3:
+                break
+            garde = nouveau
+        return coef
+
     def tracer(self, n):
         """Nuage 3D de l'image n (0 = état plat, 1..n = photos de l'essai ; -1 = dernière)."""
         ligne = self.ligne_image(n)
         num = ligne if self.etat_plat else ligne + 1       # numéro affiché (titre, nom du fichier)
         derniere = len(self.X) - 1 if self.etat_plat else len(self.X)
         x, y, z = self.X[ligne], self.Y[ligne], self.Z[ligne]
-        if self.deplacement:
-            z = z - self.Z[0]              # nouveau tableau : self.Z reste intact
+        if self.affichage_z == "plan":     # même plan retiré à toutes les images (nouveau tableau)
+            a, b, c = self.plan_reference()
+            z = z - (a + b * x + c * y)
+        elif self.affichage_z == "deplacement":
+            z = z - self.Z[0]              # chaque tache : z − son z à l'image 0
         if self.inverser_z:
             z = -z
         ok = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
@@ -320,7 +359,7 @@ class Detect3D:
         ax.grid(visible=True, color="grey", linestyle="-.", linewidth=0.3, alpha=0.2)
         ax.set_xlabel("X"); ax.set_ylabel("Y"); ax.set_zlabel("Z")
         ax.set_xlim(-10, 90); ax.set_ylim(-10, 90)
-        if self.deplacement:               # déplacement : axe vertical fixé ; position : automatique
+        if self.affichage_z != "position":  # plan / déplacement : axe vertical fixé ; position : automatique
             ax.set_zlim(-10, 90)
         sctt = ax.scatter3D(x, y, z, alpha=0.8, c=z, cmap=plt.get_cmap("viridis"),
                             norm=self.norme_couleurs())
@@ -329,7 +368,8 @@ class Detect3D:
             ax.set_aspect("equal")
         except NotImplementedError:        # anciennes versions de matplotlib
             pass
-        quoi = "déplacement Z" if self.deplacement else "Z"
+        quoi = {"position": "Z", "plan": "Z − plan médian de l'image 0",
+                "deplacement": "déplacement Z / image 0"}[self.affichage_z]
         plt.title(f"{self.methode} {self.tag} - image {num} / {derniere} - {quoi} (mm), "
                   f"{ok.sum()} points")
         cbar = fig.colorbar(sctt, ax=ax, shrink=0.5, aspect=5,
