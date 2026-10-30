@@ -236,6 +236,9 @@ class AppariementStereo:
         C'est le format lu par detect3D_*.py (Lp_final.npy). La droite est en
         coordonnées brutes, comme pour l'étalonnage.
         """
+        if len(all_pxl) != len(all_pxr):
+            raise ValueError(f"Nombre d'images différent : {len(all_pxl)} à gauche, {len(all_pxr)} à droite "
+                             "(aligner d'abord les images des deux caméras)")
         iL = np.array([a for a, _ in paires], dtype=int)
         iR = np.array([b for _, b in paires], dtype=int)
         gauche = np.stack([all_pyl[:, iL], all_pxl[:, iL]], axis=-1)

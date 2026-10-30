@@ -7,7 +7,7 @@ Remplace getaniso.py. Pour chaque image traitée :
   3. on ajuste une ellipse sur leurs positions actuelles (x, y) : demi-axes a ≥ b, centre, angle ;
   4. anisotropie = b / a (1 = isotrope), puis droite b/a = pente·p + ordonnée sur l'ensemble des niveaux.
 
-Organisation des dossiers (dossier_essai = <date>/essai1) :
+Organisation des dossiers (dossier_essai = ex. Expériences/<date>/essai1) :
     <essai>/reconstruction/<source>/   X3d.txt, Y3d.txt, Z3d.txt (entrée)
     <essai>/anisotropie/<source>/      ellipses_<n>.txt et figures (sortie)
 """
@@ -81,8 +81,7 @@ class Anisotropie:
 
     def __init__(self,
                  # --- Essai à traiter ---
-                 date=None,                 # AAAA_MM_JJ ; None = aujourd'hui
-                 dossier_essai=None,        # ex. <date>/essai1 ; None = <date>/essai1
+                 dossier_essai=None,        # ex. ../../Expériences/2026_10_29/essai1 ; None = voir Deformation
                  source=None,               # sous-dossier de reconstruction/ ; None = le premier trouvé
                  images=(-1,),              # images traitées (getaniso.py : ip, image à 245 mbar)
                  # --- Grille et interpolation (voir Deformation) ---
@@ -94,10 +93,10 @@ class Anisotropie:
                  masque="disque",
                  rayon_masque=1.0,
                  seuil_aberrants=2.0,       # filtre des taches aberrantes (mm), 0 = aucun (voir Deformation)
-                 exclusions_manuelles=True, # retirer les taches exclues à la main (selection_gui)
+                 exclusions_manuelles=True, # retirer les taches exclues à la main (retouche_gui)
                  # --- Niveaux ---
                  niveau_min=0.40,           # fraction du déplacement z max
-                 niveau_max=0.80,
+                 niveau_max=1.00,
                  pas_niveau=0.01,
                  tolerance=0.05,            # demi-épaisseur (mm) de la bande gardée autour du niveau
                  inverser_z=None,           # None = auto (dôme vers le haut), True / False = forcé
@@ -114,7 +113,7 @@ class Anisotropie:
         if not pas_niveau > 0 or not tolerance > 0:
             raise ValueError("pas_niveau et tolerance doivent être > 0")
         # Deformation porte les chemins, la grille et l'interpolation (et vérifie les options)
-        self.deformation = Deformation(date=date, dossier_essai=dossier_essai, source=source,
+        self.deformation = Deformation(dossier_essai=dossier_essai, source=source,
                                        taille_grille=taille_grille, interpolation=interpolation,
                                        fonction_rbf=fonction_rbf, lissage=lissage, voisins=voisins,
                                        masque=masque, rayon_masque=rayon_masque,
@@ -122,7 +121,7 @@ class Anisotropie:
                                        exclusions_manuelles=exclusions_manuelles,
                                        inverser_z=False)      # le sens de z est géré ici (analyser)
         d = self.deformation
-        self.date, self.dossier_essai, self.source = d.date, d.dossier_essai, d.source
+        self.dossier_essai, self.source = d.dossier_essai, d.source
         self.images = tuple(images)
         self.taille_grille, self.interpolation, self.fonction_rbf = d.taille_grille, d.interpolation, d.fonction_rbf
         self.lissage, self.voisins, self.masque, self.rayon_masque = d.lissage, d.voisins, d.masque, d.rayon_masque
@@ -271,7 +270,7 @@ class Anisotropie:
             print("  ⚠ Uz max ≤ 0 : le dôme est vers le bas, essayer « Sens de z » = inverser.")
         elif max(bandes) < 6:
             print(f"  ⚠ bandes presque vides : tolérance ({self.tolerance:g} mm) trop petite pour "
-                  f"Uz max = {zmax:.3g} mm (Z encore 10× trop petit ?).")
+                  f"Uz max = {zmax:.3g} mm, ou grille trop grossière.")
 
     # ----- figures -----
 

@@ -8,36 +8,21 @@ Les valeurs proposées au départ sont les valeurs par défaut de Deformation.__
 """
 
 import os
-import re
 import tkinter as tk
+from pathlib import Path
 from tkinter import ttk, messagebox, filedialog
 
 from Pycaso.correction_class import Correction
 from Pycaso.deformation_class import Deformation
 from Pycaso.reconstruction_class import Detect3D
+from Pycaso.style_gui import Style
 
 
-# ----- outils tkinter (style, choix des images, explorateur de dossiers) -----
+# ----- outils tkinter (choix des images, explorateur de dossiers ; style : Pycaso/style_gui.py) -----
 
-_PAD = {"padx": 6, "pady": 3}
-_VERT, _ORANGE, _ROUGE = "#2e7d32", "#e65100", "#c62828"
+_PAD = Style.PAD
+_VERT, _ORANGE, _ROUGE, _GRIS = Style.VERT, Style.ORANGE, Style.ROUGE, Style.GRIS
 _AIDE_IMAGES = "ex. 0, 10:20, -1   (a:b = de a à b inclus ; -1 = dernière)"
-
-
-def _appliquer_style(root):
-    """Thème 'clam' + cases à cocher lisibles (vert avec coche si cochée)."""
-    style = ttk.Style(root)
-    style.theme_use("clam")
-    style.configure("TCheckbutton", indicatorsize=16, indicatormargin=(2, 2, 8, 2),
-                    indicatorbackground="white", indicatorforeground="white",
-                    upperbordercolor="#555555", lowerbordercolor="#555555")
-    style.map("TCheckbutton",
-              indicatorbackground=[("disabled", "#dddddd"),
-                                   ("pressed", "#a5d6a7"),
-                                   ("selected", "#2e7d32")],
-              indicatorforeground=[("selected", "white")],
-              foreground=[("disabled", "#aaaaaa"), ("selected", "black"),
-                          ("!selected", "#666666")])
 
 
 # ----- images -----
@@ -79,8 +64,7 @@ def _choisir_images(parent, nb, var, titre="Images"):
     except ValueError:
         actuelles = set()
 
-    fen = tk.Toplevel(parent)
-    fen.title(f"{titre} ({nb} images)")
+    fen = Style.fenetre(parent, f"{titre} ({nb} images)")
     fen.transient(parent)
     fen.grab_set()
     cases = [tk.BooleanVar(value=i in actuelles) for i in range(nb)]
@@ -89,7 +73,7 @@ def _choisir_images(parent, nb, var, titre="Images"):
     # zone défilante (utile quand il y a beaucoup d'images)
     cadre = ttk.Frame(fen)
     cadre.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
-    canvas = tk.Canvas(cadre, highlightthickness=0,
+    canvas = tk.Canvas(cadre, highlightthickness=0, background=Style.FOND,
                        height=min(400, 30 * ((nb + COLONNES - 1) // COLONNES) + 4))
     barre = ttk.Scrollbar(cadre, orient="vertical", command=canvas.yview)
     grille = ttk.Frame(canvas)
@@ -135,6 +119,17 @@ def _choisir_images(parent, nb, var, titre="Images"):
 
 # ----- dossiers -----
 
+def _essai_recent(racine, secours):
+    """Dossier d'essai le plus récemment modifié contenant reconstruction/ (racine/<date>/<essai>)."""
+    try:
+        essais = [p.parent for p in Path(racine).expanduser().glob("*/*/reconstruction") if p.is_dir()]
+    except OSError:
+        essais = []
+    if not essais:
+        return secours
+    return str(max(essais, key=lambda p: (p / "reconstruction").stat().st_mtime))
+
+
 def _dossier_depart(prefere, secours="."):
     """prefere s'il existe ; sinon le premier dossier existant en remontant depuis secours."""
     d = os.path.abspath(os.path.expanduser(prefere))
@@ -146,7 +141,7 @@ def _dossier_depart(prefere, secours="."):
     return d
 
 
-def _parcourir_essai(parent, var, prefere, titre="Dossier de l'essai (ex. date/essai1)"):
+def _parcourir_essai(parent, var, prefere, titre="Dossier de l'essai (ex. Expériences/<date>/essai1)"):
     """Explorateur de dossiers commençant dans prefere ; écrit le choix dans var (StringVar)."""
     d = filedialog.askdirectory(initialdir=_dossier_depart(prefere, var.get().strip()),
                                 parent=parent, title=titre)
@@ -162,7 +157,7 @@ class DeformationGUI:
     """Fenêtre de saisie des paramètres de Deformation."""
 
     CASES = [
-        ("exclusions_manuelles", "Retirer les taches exclues à la main (outil de sélection)"),
+        ("exclusions_manuelles", "Retirer les taches exclues à la main (outil de retouche)"),
         ("nuage_3d", "Tracer aussi le nuage de points 3D"),
         ("nuage_deplacement", "Nuage 3D : tracer le déplacement z − z(image de référence) plutôt que z"),
         ("enregistrer_champs", "Enregistrer les champs calculés (champs_<n>.npz)"),
@@ -182,14 +177,10 @@ class DeformationGUI:
         self.root = tk.Tk()
         self.root.title("Champs de déformation")
         self.root.resizable(False, False)
-        _appliquer_style(self.root)
+        Style.appliquer(self.root)
         self._creer_variables(Deformation())       # valeurs par défaut de la classe
         self._construire()
-        # le dossier de l'essai suit la date tant que l'utilisateur ne l'a pas modifié
-        self._chemin_auto = self.v["dossier_essai"].get()
-        self.v["date"].trace_add("write", self._suivre_date)
-        for k in ("date", "dossier_essai"):
-            self.v[k].trace_add("write", self._maj_sources)
+        self.v["dossier_essai"].trace_add("write", self._maj_sources)
         self.v["source"].trace_add("write", self._maj)
         self._maj_sources()
         self._maj_calcul()
@@ -203,8 +194,7 @@ class DeformationGUI:
 
     def _creer_variables(self, d):
         self.v = {
-            "date": tk.StringVar(value=d.date),
-            "dossier_essai": tk.StringVar(value=d.dossier_essai),
+            "dossier_essai": tk.StringVar(value=_essai_recent(Detect3D.DOSSIER_PARCOURIR, d.dossier_essai)),
             "source": tk.StringVar(value=d.source),
             "taille_grille": tk.StringVar(value=str(d.taille_grille)),
             "interpolation": tk.StringVar(value=d.interpolation),
@@ -230,7 +220,7 @@ class DeformationGUI:
         return f
 
     def _aide(self, f, texte, ligne, colonne=2):
-        lbl = ttk.Label(f, text=texte, foreground="gray")
+        lbl = ttk.Label(f, text=texte, foreground=_GRIS)
         lbl.grid(row=ligne, column=colonne, sticky="w", **self.PAD)
         return lbl
 
@@ -239,19 +229,17 @@ class DeformationGUI:
 
         # --- Essai ---
         f = self._bloc("Essai", 0)
-        ttk.Label(f, text="Date (AAAA_MM_JJ)").grid(row=0, column=0, sticky="w", **pad)
-        ttk.Entry(f, textvariable=self.v["date"], width=16).grid(row=0, column=1, sticky="w", **pad)
         ttk.Label(f, text="Dossier de l'essai").grid(row=1, column=0, sticky="w", **pad)
         ligne = ttk.Frame(f)
         ligne.grid(row=1, column=1, columnspan=2, sticky="w", **pad)
-        ttk.Entry(ligne, textvariable=self.v["dossier_essai"], width=44).grid(row=0, column=0)
+        ttk.Entry(ligne, textvariable=self.v["dossier_essai"], width=60).grid(row=0, column=0)
         ttk.Button(ligne, text="…", width=3, command=self._parcourir).grid(row=0, column=1, padx=(4, 0))
         ttk.Label(f, text="Reconstruction").grid(row=2, column=0, sticky="w", **pad)
         self.cb_source = ttk.Combobox(f, textvariable=self.v["source"], state="readonly", width=20)
         self.cb_source.grid(row=2, column=1, sticky="w", **pad)
         self.lbl_source = ttk.Label(f, wraplength=420, justify="left")
         self.lbl_source.grid(row=2, column=2, sticky="w", **pad)
-        self.lbl_sortie = ttk.Label(f, foreground="gray", wraplength=600)
+        self.lbl_sortie = ttk.Label(f, foreground=_GRIS, wraplength=600)
         self.lbl_sortie.grid(row=3, column=0, columnspan=3, sticky="w", **pad)
 
         # --- Calcul ---
@@ -278,7 +266,7 @@ class DeformationGUI:
         ttk.Label(lr, text="voisins").grid(row=0, column=2, padx=(12, 4))
         self.e_voisins = ttk.Entry(lr, textvariable=self.v["voisins"], width=8)
         self.e_voisins.grid(row=0, column=3)
-        ttk.Label(lr, text="(0 = sans lissage / toutes les taches)", foreground="gray").grid(
+        ttk.Label(lr, text="(0 = sans lissage / toutes les taches)", foreground=_GRIS).grid(
             row=0, column=4, padx=(8, 0))
 
         ttk.Label(f, text="Masque").grid(row=3, column=0, sticky="w", **pad)
@@ -292,7 +280,7 @@ class DeformationGUI:
         self.e_rayon = ttk.Entry(lm, textvariable=self.v["rayon_masque"], width=8)
         self.e_rayon.grid(row=0, column=1)
         ttk.Label(lm, text="× demi-largeur de la zone initiale (disque) ; hors masque : NaN",
-                  foreground="gray").grid(row=0, column=2, padx=(8, 0))
+                  foreground=_GRIS).grid(row=0, column=2, padx=(8, 0))
 
         ttk.Label(f, text="Seuil des aberrants (mm)").grid(row=5, column=0, sticky="w", **pad)
         ttk.Entry(f, textvariable=self.v["seuil_aberrants"], width=16).grid(row=5, column=1, sticky="w", **pad)
@@ -313,7 +301,7 @@ class DeformationGUI:
         li.grid(row=0, column=1, columnspan=2, sticky="w", **pad)
         ttk.Entry(li, textvariable=self.v["images"], width=30).grid(row=0, column=0)
         ttk.Button(li, text="Choisir…", command=self._choisir_images).grid(row=0, column=1, padx=(4, 8))
-        ttk.Label(li, text=_AIDE_IMAGES, foreground="gray").grid(row=0, column=2, sticky="w")
+        ttk.Label(li, text=_AIDE_IMAGES, foreground=_GRIS).grid(row=0, column=2, sticky="w")
 
         ttk.Label(f, text="Grandeurs tracées").grid(row=1, column=0, sticky="nw", **pad)
         lg = ttk.Frame(f)
@@ -327,7 +315,7 @@ class DeformationGUI:
         lc.grid(row=2, column=1, columnspan=2, sticky="w", **pad)
         for k, c in enumerate(Deformation.COMPOSANTES):
             ttk.Checkbutton(lc, text=c, variable=self.v_composantes[c]).grid(row=0, column=k, padx=(0, 10))
-        ttk.Label(lc, text="(des tenseurs ; U trace x, y, z)", foreground="gray").grid(row=0, column=6)
+        ttk.Label(lc, text="(des tenseurs ; U trace x, y, z)", foreground=_GRIS).grid(row=0, column=6)
 
         for i, (nom, lib) in enumerate(self.CASES, start=3):
             ttk.Checkbutton(f, text=lib, variable=self.v[nom]).grid(row=i, column=0, columnspan=3,
@@ -343,19 +331,12 @@ class DeformationGUI:
 
     # ----- dossier de l'essai -----
 
-    def _suivre_date(self, *_):
-        """Met à jour le chemin d'après la date, sauf s'il a été modifié à la main."""
-        if self.v["dossier_essai"].get() == self._chemin_auto:
-            self._chemin_auto = Detect3D.chemin_par_defaut(self.v["date"].get().strip())
-            self.v["dossier_essai"].set(self._chemin_auto)
-
     def _parcourir(self):
         _parcourir_essai(self.root, self.v["dossier_essai"], Detect3D.DOSSIER_PARCOURIR)
 
     def _courant(self):
-        """Deformation portant la date, le dossier et la source saisis (pour les chemins)."""
-        return Deformation(date=self.v["date"].get().strip(),
-                           dossier_essai=self.v["dossier_essai"].get().strip() or None,
+        """Deformation portant le dossier et la source saisis (pour les chemins)."""
+        return Deformation(dossier_essai=self.v["dossier_essai"].get().strip() or None,
                            source=self.v["source"].get() or None)
 
     # ----- mises à jour en direct -----
@@ -386,7 +367,7 @@ class DeformationGUI:
                                          foreground=_VERT)
         else:
             self.lbl_reference.configure(text="image d'où sont comptés les déplacements (0 = première image)",
-                                         foreground="gray")
+                                         foreground=_GRIS)
         self.lbl_sortie.configure(text=f"Résultats dans : {d.dossier_sortie}")
 
     def _changer_interpolation(self, *_):
@@ -428,9 +409,6 @@ class DeformationGUI:
 
     def _on_ok(self):
         erreurs = []
-        date = self.v["date"].get().strip()
-        if not re.fullmatch(r"\d{4}_\d{2}_\d{2}", date):
-            erreurs.append("Date attendue au format AAAA_MM_JJ")
         taille = self._nombre("taille_grille", "Taille de la grille", erreurs, int, 10, defaut=100)
         lissage = self._nombre("lissage", "Lissage", erreurs, float, 0)
         voisins = self._nombre("voisins", "Voisins", erreurs, int, 0)
@@ -465,8 +443,7 @@ class DeformationGUI:
             messagebox.showerror("Paramètres invalides", "\n".join(erreurs), parent=self.root)
             return
 
-        self.result = Deformation(date=date,
-                                  dossier_essai=self.v["dossier_essai"].get().strip(),
+        self.result = Deformation(dossier_essai=self.v["dossier_essai"].get().strip(),
                                   source=self.v["source"].get(),
                                   taille_grille=taille,
                                   interpolation=self.v["interpolation"].get(),

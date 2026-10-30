@@ -12,25 +12,45 @@ import os
 import re
 import tkinter as tk
 import tkinter.font as tkfont
+from pathlib import Path
 from tkinter import ttk, messagebox, filedialog
 
 from Pycaso.detection_spots_general import DetectionSpots
 from Pycaso.detection_spots_appariemment import AppariementStereo
+from Pycaso.style_gui import Style
 
 
-# ----- palette -----
-FOND = "#eef1f5"          # fond de la fenêtre
-CARTE = "#ffffff"         # fond des cartes
-BORD = "#dde2e8"          # bordure des cartes
-TEXTE = "#1f2933"
-DISCRET = "#6b7785"       # aides et textes secondaires
-ACCENT = "#2563eb"        # bouton Lancer, liserés, cases cochées
-ACCENT_FONCE = "#1d4ed8"
-ENTETE = "#1e293b"
-OK, OK_FOND = "#1b7a3d", "#e6f4ea"
-ERR, ERR_FOND = "#b42318", "#fdecea"
-AVERT, AVERT_FOND = "#a15c00", "#fff4e0"
-INFO, INFO_FOND = "#1e3a8a", "#eef4ff"
+# dossier où l'on cherche les essais et où l'explorateur « … » commence (../../Expériences)
+DOSSIER_PARCOURIR = str(Path(DetectionSpots.chemin_par_defaut("x")).parent.parent)
+
+# ----- palette : celle du thème commun (Pycaso/style_gui.py), plus quelques teintes propres -----
+FOND = "#141b27"          # fond de la fenêtre, autour des cartes (plus sombre que les cartes)
+CARTE = Style.FOND        # fond des cartes
+BORD = Style.BORD         # bordure des cartes
+TEXTE = Style.TEXTE
+DISCRET = Style.GRIS      # aides et textes secondaires
+ACCENT = Style.ACCENT     # bouton Lancer, liserés, cases cochées
+ACCENT_FONCE = "#2f66b8"
+ENTETE = "#101722"
+OK, OK_FOND = Style.VERT, "#1f3a2c"
+ERR, ERR_FOND = Style.ROUGE, "#40232a"
+AVERT, AVERT_FOND = Style.ORANGE, "#3f2f1d"
+INFO, INFO_FOND = "#b9cdf0", "#1f2c45"
+
+
+def _essai_recent(racine, secours):
+    """Dossier d'essai (racine/<date>/<essai>) contenant video_extenso_left, le plus récemment modifié.
+
+    Les dossiers de calibration (avec hauteurs_calibration*.txt) sont ignorés.
+    """
+    try:
+        essais = [p.parent for p in Path(racine).expanduser().glob("*/*/video_extenso_left")
+                  if p.is_dir() and not any(p.parent.glob("hauteurs_calibration*.txt"))]
+    except OSError:
+        essais = []
+    if not essais:
+        return secours
+    return str(max(essais, key=lambda p: (p / "video_extenso_left").stat().st_mtime))
 
 
 class DetectionSpotsGUI:
@@ -70,10 +90,7 @@ class DetectionSpotsGUI:
         self._setup_style()
         self._creer_variables(DetectionSpots())   # valeurs par défaut de la classe
         self._construire()
-        # le dossier de mesure suit la date tant que l'utilisateur ne l'a pas modifié
-        self._chemin_auto = self.v["dossier_mesure"].get()
-        self.v["date"].trace_add("write", self._suivre_date)
-        for k in ("date", "dossier_mesure", "l_pform"):
+        for k in ("dossier_mesure", "l_pform"):
             self.v[k].trace_add("write", self._maj_essai)
         self.v["utiliser_etalonnage"].trace_add("write", self._maj_mode)
         self.v["modele_recalage"].trace_add("write", self._maj_aide_modele)
@@ -92,7 +109,7 @@ class DetectionSpotsGUI:
     # ----- style -----
 
     def _setup_style(self):
-        """Thème 'clam' recoloré : cartes blanches sur fond gris clair, accent bleu."""
+        """Thème commun (Pycaso/style_gui.py) + styles propres à cette fenêtre (cartes, en-tête)."""
         base = tkfont.nametofont("TkDefaultFont")
         famille = base.actual("family")
         self.polices = {
@@ -106,47 +123,21 @@ class DetectionSpotsGUI:
         for nom in ("TkDefaultFont", "TkTextFont", "TkMenuFont"):
             tkfont.nametofont(nom).configure(family=famille, size=10)
 
-        s = ttk.Style(self.root)
-        s.theme_use("clam")
+        s = Style.appliquer(self.root)
+        self.root.configure(background=FOND)
         p = self.polices
-        s.configure(".", background=CARTE, foreground=TEXTE, font=p["texte"])
         s.configure("Fond.TFrame", background=FOND)
         s.configure("Carte.TFrame", background=CARTE)
         s.configure("TLabel", background=CARTE, foreground=TEXTE)
         s.configure("Aide.TLabel", foreground=DISCRET, font=p["petit"])
-        s.configure("Carte.TLabel", font=p["carte"])
-        s.configure("Entete.TLabel", background=ENTETE, foreground="white", font=p["titre"])
-        s.configure("SousTitre.TLabel", background=ENTETE, foreground="#cbd5e1", font=p["sous_titre"])
+        s.configure("Carte.TLabel", font=p["carte"], foreground=Style.TITRE)
+        s.configure("Entete.TLabel", background=ENTETE, foreground=TEXTE, font=p["titre"])
+        s.configure("SousTitre.TLabel", background=ENTETE, foreground=DISCRET, font=p["sous_titre"])
         s.configure("Info.TLabel", background=INFO_FOND, foreground=INFO, font=p["petit"])
-
-        # champs
-        s.configure("TEntry", fieldbackground="white", bordercolor=BORD, lightcolor=BORD,
-                    darkcolor=BORD, padding=(6, 4))
-        s.map("TEntry", bordercolor=[("focus", ACCENT)], lightcolor=[("focus", ACCENT)],
-              fieldbackground=[("disabled", "#f3f5f8")], foreground=[("disabled", "#a3acb7")])
-        s.configure("TCombobox", fieldbackground="white", background="white", bordercolor=BORD,
-                    lightcolor=BORD, darkcolor=BORD, arrowcolor=DISCRET, padding=(6, 4))
-        s.map("TCombobox", fieldbackground=[("readonly", "white"), ("disabled", "#f3f5f8")],
-              foreground=[("disabled", "#a3acb7")], bordercolor=[("focus", ACCENT)],
-              selectbackground=[("readonly", "white")], selectforeground=[("readonly", TEXTE)])
-        self.root.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
-        self.root.option_add("*TCombobox*Listbox.font", p["texte"])
-
-        # cases à cocher : carré blanc, bleu avec coche blanche si coché
-        s.configure("TCheckbutton", background=CARTE, indicatorsize=15,
-                    indicatormargin=(0, 0, 8, 0), indicatorbackground="white",
-                    indicatorforeground="white", upperbordercolor="#9aa5b1",
-                    lowerbordercolor="#9aa5b1", padding=(0, 3))
-        s.map("TCheckbutton",
-              background=[("active", CARTE)],
-              indicatorbackground=[("disabled", "#eceff3"), ("selected", ACCENT)],
-              upperbordercolor=[("selected", ACCENT)], lowerbordercolor=[("selected", ACCENT)],
-              foreground=[("disabled", "#a3acb7")])
-
-        # boutons
-        s.configure("TButton", background="#f3f5f8", bordercolor=BORD, lightcolor="#f3f5f8",
-                    darkcolor="#f3f5f8", padding=(14, 6), font=p["texte"])
-        s.map("TButton", background=[("active", "#e6eaf0")])
+        s.configure("TEntry", padding=(6, 4))
+        s.configure("TCombobox", padding=(6, 4))
+        s.configure("TCheckbutton", padding=(0, 3))
+        s.configure("TButton", padding=(14, 6))
         s.configure("Accent.TButton", background=ACCENT, foreground="white", bordercolor=ACCENT,
                     lightcolor=ACCENT, darkcolor=ACCENT, font=p["bouton"], padding=(22, 7))
         s.map("Accent.TButton", background=[("active", ACCENT_FONCE), ("pressed", ACCENT_FONCE)],
@@ -158,8 +149,8 @@ class DetectionSpotsGUI:
 
     def _creer_variables(self, defaut):
         self.v = {}
-        for nom in ("date", "dossier_mesure"):
-            self.v[nom] = tk.StringVar(value=str(getattr(defaut, nom)))
+        self.v["dossier_mesure"] = tk.StringVar(
+            value=_essai_recent(DOSSIER_PARCOURIR, defaut.dossier_mesure))
         for nom, _, _, _ in self.CHAMPS_SUIVI + self.CHAMPS_APPARIEMENT:
             self.v[nom] = tk.StringVar(value=str(getattr(defaut, nom)))
         for nom, _ in self.CASES:
@@ -224,10 +215,6 @@ class DetectionSpotsGUI:
 
         # --- Essai (pleine largeur) ---
         f = self._carte(corps, "Essai", 0, 0, columnspan=2)
-        ttk.Label(f, text="Date").grid(row=1, column=0, sticky="w", padx=(0, 12), pady=4)
-        ttk.Entry(f, textvariable=self.v["date"], width=14).grid(row=1, column=1, sticky="w", pady=4)
-        ttk.Label(f, text="AAAA_MM_JJ", style="Aide.TLabel").grid(row=1, column=2, sticky="w",
-                                                                   padx=(10, 0))
         ttk.Label(f, text="Dossier de l'essai").grid(row=2, column=0, sticky="w", padx=(0, 12), pady=4)
         ligne = ttk.Frame(f, style="Carte.TFrame")
         ligne.grid(row=2, column=1, columnspan=2, sticky="ew", pady=4)
@@ -325,15 +312,11 @@ class DetectionSpotsGUI:
 
     # ----- chemin du dossier de mesure -----
 
-    def _suivre_date(self, *_):
-        """Met à jour le chemin d'après la date, sauf s'il a été modifié à la main."""
-        if self.v["dossier_mesure"].get() == self._chemin_auto:
-            self._chemin_auto = DetectionSpots.chemin_par_defaut(self.v["date"].get().strip())
-            self.v["dossier_mesure"].set(self._chemin_auto)
-
     def _parcourir(self):
         depart = self.v["dossier_mesure"].get().strip()
-        d = filedialog.askdirectory(initialdir=depart if os.path.isdir(depart) else ".",
+        if not os.path.isdir(depart):
+            depart = DOSSIER_PARCOURIR if os.path.isdir(DOSSIER_PARCOURIR) else "."
+        d = filedialog.askdirectory(initialdir=depart, parent=self.root,
                                     title="Dossier contenant video_extenso_left et video_extenso_right")
         if d:
             # chemin relatif si le dossier est sous le dossier courant (plus lisible)
@@ -364,9 +347,8 @@ class DetectionSpotsGUI:
         self._maj_essai()
 
     def _essai_courant(self):
-        """DetectionSpots portant seulement la date et le dossier saisis (pour les chemins)."""
-        return DetectionSpots(date=self.v["date"].get().strip(),
-                              dossier_mesure=self.v["dossier_mesure"].get().strip() or None)
+        """DetectionSpots portant seulement le dossier saisi (pour les chemins)."""
+        return DetectionSpots(dossier_mesure=self.v["dossier_mesure"].get().strip() or None)
 
     @staticmethod
     def _lpforms_disponibles(essai):
@@ -418,7 +400,6 @@ class DetectionSpotsGUI:
         params, erreurs = {}, []
         calib = self.v["utiliser_etalonnage"].get()
         params["utiliser_etalonnage"] = calib
-        params["date"] = self.v["date"].get().strip()
         params["dossier_mesure"] = self.v["dossier_mesure"].get().strip()
         for nom, lib, typ, _ in self.CHAMPS_SUIVI + self.CHAMPS_APPARIEMENT:
             txt = self.v[nom].get().strip()
@@ -448,8 +429,6 @@ class DetectionSpotsGUI:
             params[nom] = self.v[nom].get()
 
         if not erreurs:
-            if not re.fullmatch(r"\d{4}_\d{2}_\d{2}", params["date"]):
-                erreurs.append("Date attendue au format AAAA_MM_JJ")
             if params["taille_min_pix"] >= params["taille_max_pix"]:
                 erreurs.append("L'aire min doit être inférieure à l'aire max")
             if min(params["pix"], params["taille_min_pix"], params["max_images_a_considerer"]) <= 0:
@@ -457,7 +436,7 @@ class DetectionSpotsGUI:
             if calib and (params["rayon_recherche"] <= 0 or params["tolerance_plan"] <= 0):
                 erreurs.append("Le rayon et la tolérance doivent être positifs")
         if erreurs:
-            messagebox.showerror("Paramètres invalides", "\n".join(erreurs))
+            messagebox.showerror("Paramètres invalides", "\n".join(erreurs), parent=self.root)
             return
 
         # étalonnage demandé mais absent : pas bloquant, lancer() apparie par recalage 2D

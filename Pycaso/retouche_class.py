@@ -26,6 +26,18 @@ SOUS_DOSSIER_RECONSTRUCTION = "reconstruction"
 FICHIER_CORRECTION = "correction_infos.json"      # écrit par la correction ; donne les indices de Lp_final
 FICHIERS_3D = ("X3d.txt", "Y3d.txt", "Z3d.txt")
 
+# Éditeur en thème sombre, mêmes couleurs que les fenêtres tkinter (Pycaso/style_gui.py).
+# Seule la fenêtre de l'éditeur est concernée : les figures enregistrées ailleurs restent claires.
+try:
+    from Pycaso.style_gui import Style as _S
+    _FOND, _AXES, _TEXTE, _GRILLE, _BOUTON, _SURVOL = _S.FOND, _S.CHAMP, _S.TEXTE, _S.BORD, _S.BOUTON, _S.SURVOL
+except ImportError:
+    _FOND, _AXES, _TEXTE, _GRILLE, _BOUTON, _SURVOL = "#1b2433", "#26324a", "#d6deeb", "#3a4a66", "#2c3b57", "#36507a"
+_RC_SOMBRE = {"figure.facecolor": _FOND, "axes.facecolor": _AXES, "axes.edgecolor": _GRILLE,
+              "axes.labelcolor": _TEXTE, "axes.titlecolor": _TEXTE, "text.color": _TEXTE,
+              "xtick.color": _TEXTE, "ytick.color": _TEXTE, "legend.facecolor": _FOND,
+              "legend.edgecolor": _GRILLE, "legend.labelcolor": _TEXTE, "savefig.facecolor": _FOND}
+
 
 class ExclusionsTaches:
     """Lecture, écriture et application des taches exclues d'une reconstruction."""
@@ -253,8 +265,9 @@ class EditeurExclusions:
     def ouvrir(self):
         """Ouvre la fenêtre (bloquant jusqu'à sa fermeture). Renvoie les indices de Lp_final exclus."""
         import matplotlib.pyplot as plt
-        self.construire()
-        plt.show()
+        with plt.rc_context(_RC_SOMBRE):          # toute la vie de la fenêtre (plt.show bloque)
+            self.construire()
+            plt.show()
         return sorted(self.indices_essai[self.exclues].tolist())
 
     def construire(self):
@@ -269,14 +282,15 @@ class EditeurExclusions:
                            "y": self.fig.add_axes((0.715, 0.27, 0.27, 0.65))}
         self.ax_slider = self.fig.add_axes((0.06, 0.12, 0.64, 0.035))
         self.slider = Slider(self.ax_slider, "Image", 0, self.nb_images - 1, valinit=self.image, valstep=1,
-                             valfmt="%d")
+                             valfmt="%d", track_color=_GRILLE)
         self.slider.on_changed(lambda v: self.changer_image(int(v)))
 
         # curseurs des bandes, sous chaque profil : position de la tranche (y pour le profil x, x pour le profil y)
         self.sliders_bande, self.ax_bandes = {}, {}
         for axe, (x0, autre) in {"x": (0.44, "y"), "y": (0.745, "x")}.items():
             self.ax_bandes[axe] = self.fig.add_axes((x0, 0.175, 0.22, 0.03))
-            self.sliders_bande[axe] = Slider(self.ax_bandes[axe], f"Bande ({autre})", 0, 1, valinit=0.5)
+            self.sliders_bande[axe] = Slider(self.ax_bandes[axe], f"Bande ({autre})", 0, 1, valinit=0.5,
+                                            track_color=_GRILLE)
             self.sliders_bande[axe].on_changed(lambda _v: self.dessiner() if self.bande else None)
             self.ax_bandes[axe].set_visible(False)
 
@@ -289,7 +303,7 @@ class EditeurExclusions:
                                  "couleur": (0.35, 0.10, "Couleur : hauteur"),
                                  "enregistrer": (0.875, 0.11, "Enregistrer (e)")}.items():
             y = 0.115 if nom in ("prec", "suiv") else 0.03
-            boutons[nom] = Button(self.fig.add_axes((x, y, w, 0.045)), txt)
+            boutons[nom] = Button(self.fig.add_axes((x, y, w, 0.045)), txt, color=_BOUTON, hovercolor=_SURVOL)
         boutons["prec"].on_clicked(lambda _e: self.changer_image(self.image - 1))
         boutons["suiv"].on_clicked(lambda _e: self.changer_image(self.image + 1))
         boutons["annuler"].on_clicked(lambda _e: self.annuler())
@@ -346,7 +360,7 @@ class EditeurExclusions:
             nom_couleur = f"écart au plan local des {self.VOISINES} voisines (mm)"
         else:
             couleur, cmap, vmin, vmax, nom_couleur = z, "viridis", cz[0], cz[1], nom_z
-        marque_exclue = "k" if self.couleur_ecart else "r"
+        marque_exclue = "w" if self.couleur_ecart else "#ff5c5c"
 
         a = self.ax_dessus
         a.clear()
@@ -356,7 +370,7 @@ class EditeurExclusions:
             demi = self.largeur_bande / 2
             py, px = self.position_bande("x"), self.position_bande("y")
             a.axhspan(py - demi, py + demi, color="tab:orange", alpha=0.25, lw=0)     # tranche du profil x
-            a.axvspan(px - demi, px + demi, color="tab:purple", alpha=0.25, lw=0)     # tranche du profil y
+            a.axvspan(px - demi, px + demi, color="#c99cff", alpha=0.25, lw=0)     # tranche du profil y
         a.set_xlim(self.cadres["x"]); a.set_ylim(self.cadres["y"]); a.set_aspect("equal", adjustable="box")
         a.set_xlabel("x (mm)"); a.set_ylabel("y (mm)"); a.set_title(f"Vue de dessus (couleur : {nom_couleur})",
                                                                      fontsize=10)
@@ -378,7 +392,7 @@ class EditeurExclusions:
             tranche = (f"{autre} = {self.position_bande(axe):.1f} ± {self.largeur_bande / 2:.1f} mm"
                        if self.bande else "toutes les taches")
             a.set_title(f"Profil selon {axe} ({tranche})", fontsize=10,
-                        color=("tab:orange" if axe == "x" else "tab:purple") if self.bande else "k")
+                        color=("tab:orange" if axe == "x" else "#c99cff") if self.bande else _TEXTE)
             a.legend(loc="upper right", fontsize=8)
 
         # points hors du cadre robuste : signalés

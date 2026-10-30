@@ -1,7 +1,7 @@
 """Interface d'exclusion manuelle de taches : choix de la reconstruction, puis sélection à la souris.
 
 Usage depuis un script placé à côté du dossier Pycaso/ :
-    from Pycaso.selection_gui import run_selection_gui
+    from Pycaso.retouche_gui import run_selection_gui
     run_selection_gui()
 
 À lancer après la reconstruction ; les taches exclues sont retirées ensuite par la déformation
@@ -9,7 +9,6 @@ et l'anisotropie (option « Retirer les taches exclues à la main »).
 """
 
 import os
-import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk, messagebox, filedialog
@@ -17,31 +16,27 @@ from tkinter import ttk, messagebox, filedialog
 from Pycaso.reconstruction_class import Detect3D
 from Pycaso.retouche_class import (EditeurExclusions, ExclusionsTaches, FICHIER_CORRECTION, FICHIERS_3D,
                                     SOUS_DOSSIER_RECONSTRUCTION)
+from Pycaso.style_gui import Style
 
 
-# ----- outils tkinter (style, explorateur de dossiers) -----
+# ----- outils tkinter (explorateur de dossiers ; style : Pycaso/style_gui.py) -----
 
-_PAD = {"padx": 6, "pady": 3}
-_VERT, _ORANGE, _ROUGE = "#2e7d32", "#e65100", "#c62828"
-
-
-def _appliquer_style(root):
-    """Thème 'clam' + cases à cocher lisibles (vert avec coche si cochée)."""
-    style = ttk.Style(root)
-    style.theme_use("clam")
-    style.configure("TCheckbutton", indicatorsize=16, indicatormargin=(2, 2, 8, 2),
-                    indicatorbackground="white", indicatorforeground="white",
-                    upperbordercolor="#555555", lowerbordercolor="#555555")
-    style.map("TCheckbutton",
-              indicatorbackground=[("disabled", "#dddddd"),
-                                   ("pressed", "#a5d6a7"),
-                                   ("selected", "#2e7d32")],
-              indicatorforeground=[("selected", "white")],
-              foreground=[("disabled", "#aaaaaa"), ("selected", "black"),
-                          ("!selected", "#666666")])
+_PAD = Style.PAD
+_VERT, _ORANGE, _ROUGE, _GRIS = Style.VERT, Style.ORANGE, Style.ROUGE, Style.GRIS
 
 
 # ----- dossiers -----
+
+def _essai_recent(racine, secours):
+    """Dossier d'essai le plus récemment modifié contenant reconstruction/ (racine/<date>/<essai>)."""
+    try:
+        essais = [p.parent for p in Path(racine).expanduser().glob("*/*/reconstruction") if p.is_dir()]
+    except OSError:
+        essais = []
+    if not essais:
+        return secours
+    return str(max(essais, key=lambda p: (p / "reconstruction").stat().st_mtime))
+
 
 def _dossier_depart(prefere, secours="."):
     """prefere s'il existe ; sinon le premier dossier existant en remontant depuis secours."""
@@ -54,7 +49,7 @@ def _dossier_depart(prefere, secours="."):
     return d
 
 
-def _parcourir_essai(parent, var, prefere, titre="Dossier de l'essai (ex. date/essai1)"):
+def _parcourir_essai(parent, var, prefere, titre="Dossier de l'essai (ex. Expériences/<date>/essai1)"):
     """Explorateur de dossiers commençant dans prefere ; écrit le choix dans var (StringVar)."""
     d = filedialog.askdirectory(initialdir=_dossier_depart(prefere, var.get().strip()),
                                 parent=parent, title=titre)
@@ -78,11 +73,9 @@ class SelectionGUI:
         self.root = tk.Tk()
         self.root.title("Exclusion manuelle de taches")
         self.root.resizable(False, False)
-        _appliquer_style(self.root)
-        date = time.strftime("%Y_%m_%d")
+        Style.appliquer(self.root)
         self.v = {
-            "date": tk.StringVar(value=date),
-            "dossier_essai": tk.StringVar(value=Detect3D.chemin_par_defaut(date)),
+            "dossier_essai": tk.StringVar(value=_essai_recent(Detect3D.DOSSIER_PARCOURIR, Detect3D().dossier_essai)),
             "source": tk.StringVar(),
             "image": tk.StringVar(value="-1"),
             "image_reference": tk.StringVar(value="0"),
@@ -90,10 +83,7 @@ class SelectionGUI:
             "sens_z": tk.StringVar(value=list(self.SENS)[0]),
         }
         self._construire()
-        self._chemin_auto = self.v["dossier_essai"].get()
-        self.v["date"].trace_add("write", self._suivre_date)
-        for k in ("date", "dossier_essai"):
-            self.v[k].trace_add("write", self._maj_sources)
+        self.v["dossier_essai"].trace_add("write", self._maj_sources)
         self.v["source"].trace_add("write", self._maj)
         self._maj_sources()
 
@@ -107,7 +97,7 @@ class SelectionGUI:
     def _ligne(self, f, ligne, texte, widget, aide=""):
         ttk.Label(f, text=texte).grid(row=ligne, column=0, sticky="w", **self.PAD)
         widget.grid(row=ligne, column=1, sticky="w", **self.PAD)
-        lbl = ttk.Label(f, text=aide, foreground="gray")
+        lbl = ttk.Label(f, text=aide, foreground=_GRIS)
         lbl.grid(row=ligne, column=2, sticky="w", **self.PAD)
         return lbl
 
@@ -115,11 +105,10 @@ class SelectionGUI:
         pad = self.PAD
         f = ttk.LabelFrame(self.root, text="Reconstruction")
         f.grid(row=0, column=0, sticky="ew", **pad)
-        self._ligne(f, 0, "Date (AAAA_MM_JJ)", ttk.Entry(f, textvariable=self.v["date"], width=16))
         ttk.Label(f, text="Dossier de l'essai").grid(row=1, column=0, sticky="w", **pad)
         l = ttk.Frame(f)
         l.grid(row=1, column=1, columnspan=2, sticky="w", **pad)
-        ttk.Entry(l, textvariable=self.v["dossier_essai"], width=52).grid(row=0, column=0)
+        ttk.Entry(l, textvariable=self.v["dossier_essai"], width=60).grid(row=0, column=0)
         ttk.Button(l, text="…", width=3, command=self._parcourir).grid(row=0, column=1, padx=(4, 0))
         self.cb_source = ttk.Combobox(f, textvariable=self.v["source"], state="readonly", width=20)
         self.lbl_source = self._ligne(f, 2, "Reconstruction", self.cb_source)
@@ -136,7 +125,7 @@ class SelectionGUI:
                     "pour Uz (source corrigée : 0 = état plat)")
         self._ligne(f, 3, "Sens de z", ttk.Combobox(f, textvariable=self.v["sens_z"], state="readonly",
                                                      values=list(self.SENS), width=28))
-        ttk.Label(f, foreground="gray", justify="left", text=(
+        ttk.Label(f, foreground=_GRIS, justify="left", text=(
             "Dans la fenêtre : clic sur une tache = l'exclure / la rétablir ; glisser = lasso. "
             "Les taches exclues le sont sur toutes les images.\nZoom : loupe de la barre d'outils "
             "(la désactiver pour sélectionner). Clavier : flèches gauche/droite = image, u = annuler, e = enregistrer.")
@@ -150,11 +139,6 @@ class SelectionGUI:
         self.root.bind("<Escape>", lambda _e: self.root.destroy())
 
     # ----- mises à jour -----
-
-    def _suivre_date(self, *_):
-        if self.v["dossier_essai"].get() == self._chemin_auto:
-            self._chemin_auto = Detect3D.chemin_par_defaut(self.v["date"].get().strip())
-            self.v["dossier_essai"].set(self._chemin_auto)
 
     def _parcourir(self):
         _parcourir_essai(self.root, self.v["dossier_essai"], Detect3D.DOSSIER_PARCOURIR)
@@ -221,3 +205,6 @@ def run_selection_gui():
     print(f"Reconstruction : {editeur.exclusions.dossier_source} ({editeur.nb_images} images, "
           f"{editeur.nb_taches} taches) ; {editeur.exclusions.resume()}")
     return editeur.ouvrir()
+
+
+run_retouche_gui = run_selection_gui        # même fonction, nom assorti au fichier

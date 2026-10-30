@@ -64,8 +64,7 @@ class Correction:
 
     def __init__(self,
                  # --- Essai ---
-                 date=None,                 # AAAA_MM_JJ ; None = aujourd'hui
-                 dossier_essai=None,        # ex. <date>/essai1 ; None = <date>/essai1
+                 dossier_essai=None,        # ex. ../../Expériences/2026_10_29/essai1 ; None = <aujourd'hui>/essai1
                  # --- Photos de l'état plat ---
                  prefixe_photo="photo_init",  # photos <prefixe>_L.* et <prefixe>_R.*
                  taille_min_pix=None,       # aire min / max d'une tache (px) ; None = valeurs de DetectionSpots
@@ -84,8 +83,7 @@ class Correction:
                  # --- Figures ---
                  enregistrer_figures=True,
                  afficher_figures=True):
-        self.date = date or time.strftime("%Y_%m_%d")
-        self.dossier_essai = dossier_essai or Detect3D.chemin_par_defaut(self.date)
+        self.dossier_essai = dossier_essai or Detect3D.chemin_par_defaut(time.strftime("%Y_%m_%d"))
         self.prefixe_photo = prefixe_photo
         defauts = None
         for nom, val in (("taille_min_pix", taille_min_pix), ("taille_max_pix", taille_max_pix),

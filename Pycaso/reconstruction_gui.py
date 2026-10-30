@@ -8,34 +8,19 @@ Les valeurs proposées au départ sont les valeurs par défaut de Detect3D.__ini
 """
 
 import os
-import re
 import tkinter as tk
+from pathlib import Path
 from tkinter import ttk, messagebox, filedialog
 
 from Pycaso.reconstruction_class import Detect3D
+from Pycaso.style_gui import Style
 
 
-# ----- outils tkinter (style, choix des images, explorateur de dossiers) -----
+# ----- outils tkinter (choix des images, explorateur de dossiers ; style : Pycaso/style_gui.py) -----
 
-_PAD = {"padx": 6, "pady": 3}
-_VERT, _ORANGE, _ROUGE = "#2e7d32", "#e65100", "#c62828"
+_PAD = Style.PAD
+_VERT, _ORANGE, _ROUGE, _GRIS = Style.VERT, Style.ORANGE, Style.ROUGE, Style.GRIS
 _AIDE_IMAGES = "ex. 0, 10:20, -1   (a:b = de a à b inclus ; -1 = dernière)"
-
-
-def _appliquer_style(root):
-    """Thème 'clam' + cases à cocher lisibles (vert avec coche si cochée)."""
-    style = ttk.Style(root)
-    style.theme_use("clam")
-    style.configure("TCheckbutton", indicatorsize=16, indicatormargin=(2, 2, 8, 2),
-                    indicatorbackground="white", indicatorforeground="white",
-                    upperbordercolor="#555555", lowerbordercolor="#555555")
-    style.map("TCheckbutton",
-              indicatorbackground=[("disabled", "#dddddd"),
-                                   ("pressed", "#a5d6a7"),
-                                   ("selected", "#2e7d32")],
-              indicatorforeground=[("selected", "white")],
-              foreground=[("disabled", "#aaaaaa"), ("selected", "black"),
-                          ("!selected", "#666666")])
 
 
 # ----- images -----
@@ -81,8 +66,7 @@ def _choisir_images(parent, nb, var, titre="Images", indisponibles=()):
     except ValueError:
         actuelles = set()
 
-    fen = tk.Toplevel(parent)
-    fen.title(f"{titre} ({nb} images)")
+    fen = Style.fenetre(parent, f"{titre} ({nb} images)")
     fen.transient(parent)
     fen.grab_set()
     cases = [tk.BooleanVar(value=i in actuelles) for i in range(nb)]
@@ -91,7 +75,7 @@ def _choisir_images(parent, nb, var, titre="Images", indisponibles=()):
     # zone défilante (utile quand il y a beaucoup d'images)
     cadre = ttk.Frame(fen)
     cadre.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
-    canvas = tk.Canvas(cadre, highlightthickness=0,
+    canvas = tk.Canvas(cadre, highlightthickness=0, background=Style.FOND,
                        height=min(400, 30 * ((nb + COLONNES - 1) // COLONNES) + 4))
     barre = ttk.Scrollbar(cadre, orient="vertical", command=canvas.yview)
     grille = ttk.Frame(canvas)
@@ -139,6 +123,18 @@ def _choisir_images(parent, nb, var, titre="Images", indisponibles=()):
 
 # ----- dossiers -----
 
+def _essai_recent(racine, secours, fichier="appariemment_et_suivi/Lp_final.npy"):
+    """Dossier d'essai (racine/<date>/<essai>) contenant fichier, le plus récemment modifié."""
+    try:
+        trouves = [p for p in Path(racine).expanduser().glob(f"*/*/{fichier}") if p.is_file()]
+    except OSError:
+        trouves = []
+    if not trouves:
+        return secours
+    plus_recent = max(trouves, key=lambda p: p.stat().st_mtime)
+    return str(plus_recent.parents[len(Path(fichier).parts) - 1])
+
+
 def _dossier_depart(prefere, secours="."):
     """prefere s'il existe ; sinon le premier dossier existant en remontant depuis secours."""
     d = os.path.abspath(os.path.expanduser(prefere))
@@ -150,7 +146,7 @@ def _dossier_depart(prefere, secours="."):
     return d
 
 
-def _parcourir_essai(parent, var, prefere, titre="Dossier de l'essai (ex. date/essai1)"):
+def _parcourir_essai(parent, var, prefere, titre="Dossier de l'essai (ex. Expériences/<date>/essai1)"):
     """Explorateur de dossiers commençant dans prefere ; écrit le choix dans var (StringVar)."""
     d = filedialog.askdirectory(initialdir=_dossier_depart(prefere, var.get().strip()),
                                 parent=parent, title=titre)
@@ -178,13 +174,10 @@ class Detect3DGUI:
         self.root = tk.Tk()
         self.root.title("Reconstruction 3D des taches")
         self.root.resizable(False, False)
-        _appliquer_style(self.root)
+        Style.appliquer(self.root)
         self._creer_variables(Detect3D())       # valeurs par défaut de la classe
         self._construire()
-        # le dossier de mesure suit la date tant que l'utilisateur ne l'a pas modifié
-        self._chemin_auto = self.v["dossier_essai"].get()
-        self.v["date"].trace_add("write", self._suivre_date)
-        for k in ("date", "dossier_essai", "degre"):
+        for k in ("dossier_essai", "degre"):
             self.v[k].trace_add("write", self._maj)
         self._maj_degres()
 
@@ -199,12 +192,10 @@ class Detect3DGUI:
 
     def _creer_variables(self, defaut):
         self.v = {
-            "date": tk.StringVar(value=defaut.date),
-            "dossier_essai": tk.StringVar(value=defaut.dossier_essai),
+            "dossier_essai": tk.StringVar(value=_essai_recent(Detect3D.DOSSIER_PARCOURIR, defaut.dossier_essai)),
             "methode": tk.StringVar(value=defaut.methode),
             "degre": tk.StringVar(value=str(defaut.degre)),
             "images_a_tracer": tk.StringVar(value=_ecrire_images(defaut.images_a_tracer)),
-            "facteur_z": tk.StringVar(value=f"{defaut.facteur_z:g}"),
             "couleurs_fixes": tk.BooleanVar(value=bool(defaut.couleurs_fixes)),
             "z_min": tk.StringVar(value=f"{defaut.z_min:g}"),
             "z_bleu": tk.StringVar(value=f"{defaut.z_bleu:g}"),
@@ -227,12 +218,10 @@ class Detect3DGUI:
 
         # --- Essai ---
         f = self._bloc("Essai", 0)
-        ttk.Label(f, text="Date (AAAA_MM_JJ)").grid(row=0, column=0, sticky="w", **pad)
-        ttk.Entry(f, textvariable=self.v["date"], width=16).grid(row=0, column=1, sticky="w", **pad)
         ttk.Label(f, text="Dossier de l'essai").grid(row=1, column=0, sticky="w", **pad)
         ligne = ttk.Frame(f)
         ligne.grid(row=1, column=1, columnspan=2, sticky="w", **pad)
-        ttk.Entry(ligne, textvariable=self.v["dossier_essai"], width=44).grid(row=0, column=0)
+        ttk.Entry(ligne, textvariable=self.v["dossier_essai"], width=60).grid(row=0, column=0)
         ttk.Button(ligne, text="…", width=3, command=self._parcourir).grid(row=0, column=1, padx=(4, 0))
         self.case_plat = ttk.Checkbutton(f, text="Utiliser l'état initial à partir des photos non flambées",
                                          variable=self.v["etat_plat"], command=self._maj)
@@ -243,9 +232,9 @@ class Detect3DGUI:
         for i, (cle, lib) in enumerate(Detect3D.AFFICHAGES_Z.items(), start=1):
             ttk.Radiobutton(lz, text=lib + (" (axe automatique)" if cle == "position" else ""),
                             value=cle, variable=self.v["affichage_z"]).grid(row=i, column=0, sticky="w", padx=(16, 0))
-        self.lbl_Lp = ttk.Label(f, wraplength=520, justify="left")
+        self.lbl_Lp = ttk.Label(f, wraplength=760, justify="left")
         self.lbl_Lp.grid(row=4, column=0, columnspan=3, sticky="w", **pad)
-        self.lbl_sortie = ttk.Label(f, foreground="gray", wraplength=520)
+        self.lbl_sortie = ttk.Label(f, foreground=_GRIS, wraplength=760)
         self.lbl_sortie.grid(row=5, column=0, columnspan=3, sticky="w", **pad)
 
         # --- Étalonnage ---
@@ -261,10 +250,6 @@ class Detect3DGUI:
         self.cb_degre.grid(row=1, column=1, sticky="w", **pad)
         self.lbl_calib = ttk.Label(f, wraplength=440, justify="left")
         self.lbl_calib.grid(row=0, column=2, rowspan=2, sticky="w", **pad)
-        ttk.Label(f, text="Facteur Z").grid(row=2, column=0, sticky="w", **pad)
-        ttk.Entry(f, textvariable=self.v["facteur_z"], width=14).grid(row=2, column=1, sticky="w", **pad)
-        ttk.Label(f, text="Z reconstruit multiplié par ce facteur (aussi dans Z3d.txt) ; 1 = brut",
-                  foreground="gray").grid(row=2, column=2, sticky="w", **pad)
 
         # --- Figures ---
         f = self._bloc("Figures", 2)
@@ -274,7 +259,7 @@ class Detect3DGUI:
         ttk.Entry(li, textvariable=self.v["images_a_tracer"], width=30).grid(row=0, column=0)
         ttk.Button(li, text="Choisir…", command=self._choisir_images).grid(row=0, column=1, padx=(4, 8))
         ttk.Label(li, text=_AIDE_IMAGES,
-                  foreground="gray").grid(row=0, column=2, sticky="w")
+                  foreground=_GRIS).grid(row=0, column=2, sticky="w")
         for i, (nom, lib) in enumerate(self.CASES, start=1):
             ttk.Checkbutton(f, text=lib, variable=self.v[nom]).grid(row=i, column=0, columnspan=3,
                                                                      sticky="w", **pad)
@@ -323,12 +308,6 @@ class Detect3DGUI:
 
     # ----- chemin du dossier de mesure -----
 
-    def _suivre_date(self, *_):
-        """Met à jour le chemin d'après la date, sauf s'il a été modifié à la main."""
-        if self.v["dossier_essai"].get() == self._chemin_auto:
-            self._chemin_auto = Detect3D.chemin_par_defaut(self.v["date"].get().strip())
-            self.v["dossier_essai"].set(self._chemin_auto)
-
     def _parcourir(self):
         """Explorateur de dossiers commençant dans Detect3D.DOSSIER_PARCOURIR."""
         _parcourir_essai(self.root, self.v["dossier_essai"], Detect3D.DOSSIER_PARCOURIR)
@@ -336,9 +315,8 @@ class Detect3DGUI:
     # ----- vérifications en direct -----
 
     def _courant(self, degre=None):
-        """Detect3D portant la date, le dossier et la méthode saisis (pour les chemins)."""
-        return Detect3D(date=self.v["date"].get().strip(),
-                        dossier_essai=self.v["dossier_essai"].get().strip() or None,
+        """Detect3D portant le dossier et la méthode saisis (pour les chemins)."""
+        return Detect3D(dossier_essai=self.v["dossier_essai"].get().strip() or None,
                         methode=self.v["methode"].get(), degre=degre, etat_plat=self.v["etat_plat"].get())
 
     def _maj_degres(self, *_):
@@ -390,9 +368,6 @@ class Detect3DGUI:
 
     def _on_ok(self):
         erreurs = []
-        date = self.v["date"].get().strip()
-        if not re.fullmatch(r"\d{4}_\d{2}_\d{2}", date):
-            erreurs.append("Date attendue au format AAAA_MM_JJ")
         try:
             degre = int(self.v["degre"].get())
         except ValueError:
@@ -403,13 +378,6 @@ class Detect3DGUI:
         except ValueError:
             images = ()
             erreurs.append("Images à tracer : entiers ou plages a:b séparés par des virgules (ex. 0, 10:20, -1)")
-        try:
-            facteur_z = float(self.v["facteur_z"].get().replace(",", "."))
-            if facteur_z == 0:
-                raise ValueError
-        except ValueError:
-            facteur_z = 1.0
-            erreurs.append("Facteur Z : nombre non nul attendu")
         echelle = dict(z_min=-10.0, z_bleu=0.0, z_jaune=60.0, z_max=100.0)
         if self.v["couleurs_fixes"].get():
             try:
@@ -440,11 +408,10 @@ class Detect3DGUI:
             messagebox.showerror("Paramètres invalides", "\n".join(erreurs), parent=self.root)
             return
 
-        self.result = Detect3D(date=date,
-                               dossier_essai=self.v["dossier_essai"].get().strip(),
+        self.result = Detect3D(dossier_essai=self.v["dossier_essai"].get().strip(),
                                methode=self.v["methode"].get(), degre=degre,
                                images_a_tracer=images,
-                               facteur_z=facteur_z, couleurs_fixes=self.v["couleurs_fixes"].get(),
+                               couleurs_fixes=self.v["couleurs_fixes"].get(),
                                etat_plat=self.v["etat_plat"].get(),
                                affichage_z=self.v["affichage_z"].get(),
                                **echelle,

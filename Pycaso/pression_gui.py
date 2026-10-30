@@ -8,7 +8,6 @@ Les valeurs proposées au départ sont les valeurs par défaut de PressionUz.__i
 """
 
 import os
-import re
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk, messagebox, filedialog
@@ -16,31 +15,27 @@ from tkinter import ttk, messagebox, filedialog
 from Pycaso.deformation_class import Deformation
 from Pycaso.pression_class import PressionUz, temps_image
 from Pycaso.reconstruction_class import Detect3D
+from Pycaso.style_gui import Style
 
 
-# ----- outils tkinter (style, explorateur de dossiers) -----
+# ----- outils tkinter (explorateur de dossiers ; style : Pycaso/style_gui.py) -----
 
-_PAD = {"padx": 6, "pady": 3}
-_VERT, _ORANGE, _ROUGE = "#2e7d32", "#e65100", "#c62828"
-
-
-def _appliquer_style(root):
-    """Thème 'clam' + cases à cocher lisibles (vert avec coche si cochée)."""
-    style = ttk.Style(root)
-    style.theme_use("clam")
-    style.configure("TCheckbutton", indicatorsize=16, indicatormargin=(2, 2, 8, 2),
-                    indicatorbackground="white", indicatorforeground="white",
-                    upperbordercolor="#555555", lowerbordercolor="#555555")
-    style.map("TCheckbutton",
-              indicatorbackground=[("disabled", "#dddddd"),
-                                   ("pressed", "#a5d6a7"),
-                                   ("selected", "#2e7d32")],
-              indicatorforeground=[("selected", "white")],
-              foreground=[("disabled", "#aaaaaa"), ("selected", "black"),
-                          ("!selected", "#666666")])
+_PAD = Style.PAD
+_VERT, _ORANGE, _ROUGE, _GRIS = Style.VERT, Style.ORANGE, Style.ROUGE, Style.GRIS
 
 
 # ----- dossiers -----
+
+def _essai_recent(racine, secours):
+    """Dossier d'essai le plus récemment modifié contenant reconstruction/ (racine/<date>/<essai>)."""
+    try:
+        essais = [p.parent for p in Path(racine).expanduser().glob("*/*/reconstruction") if p.is_dir()]
+    except OSError:
+        essais = []
+    if not essais:
+        return secours
+    return str(max(essais, key=lambda p: (p / "reconstruction").stat().st_mtime))
+
 
 def _dossier_depart(prefere, secours="."):
     """prefere s'il existe ; sinon le premier dossier existant en remontant depuis secours."""
@@ -53,7 +48,7 @@ def _dossier_depart(prefere, secours="."):
     return d
 
 
-def _parcourir_essai(parent, var, prefere, titre="Dossier de l'essai (ex. date/essai1)"):
+def _parcourir_essai(parent, var, prefere, titre="Dossier de l'essai (ex. Expériences/<date>/essai1)"):
     """Explorateur de dossiers commençant dans prefere ; écrit le choix dans var (StringVar)."""
     d = filedialog.askdirectory(initialdir=_dossier_depart(prefere, var.get().strip()),
                                 parent=parent, title=titre)
@@ -69,7 +64,7 @@ class PressionGUI:
     """Fenêtre de saisie des paramètres de PressionUz."""
 
     CASES = [
-        ("exclusions_manuelles", "Retirer les taches exclues à la main (outil de sélection)"),
+        ("exclusions_manuelles", "Retirer les taches exclues à la main (outil de retouche)"),
         ("tracer_temps", "Tracer aussi pression et Uz max en fonction du temps"),
         ("enregistrer_resultats", "Enregistrer le tableau (pression_uz.txt)"),
         ("enregistrer_figures", "Enregistrer les figures (.png dans <essai>/pression/<source>)"),
@@ -85,10 +80,10 @@ class PressionGUI:
         self.root = tk.Tk()
         self.root.title("Pression en fonction de Uz max")
         self.root.resizable(False, False)
-        _appliquer_style(self.root)
+        Style.appliquer(self.root)
         p = PressionUz(source="-")                     # valeurs par défaut de la classe
+        p.dossier_essai = _essai_recent(Detect3D.DOSSIER_PARCOURIR, p.dossier_essai)
         self.v = {
-            "date": tk.StringVar(value=p.date),
             "dossier_essai": tk.StringVar(value=p.dossier_essai),
             "source": tk.StringVar(),
             "fichier_pression": tk.StringVar(value=str(Path(p.dossier_essai) / p.fichier_pression)),
@@ -108,12 +103,9 @@ class PressionGUI:
         for nom, _ in self.CASES:
             self.v[nom] = tk.BooleanVar(value=bool(getattr(p, nom)))
         self._construire()
-        self._chemin_auto = self.v["dossier_essai"].get()
         self._fichier_auto = self.v["fichier_pression"].get()
-        self.v["date"].trace_add("write", self._suivre_date)
         self.v["dossier_essai"].trace_add("write", self._suivre_essai)
-        for k in ("date", "dossier_essai"):
-            self.v[k].trace_add("write", self._maj_sources)
+        self.v["dossier_essai"].trace_add("write", self._maj_sources)
         for k in ("source", "fichier_pression", "colonne_temps", "colonne_pression", "separateur", "lignes_entete",
                   "decalage_temps"):
             self.v[k].trace_add("write", self._maj)
@@ -135,7 +127,7 @@ class PressionGUI:
     def _ligne(self, f, ligne, texte, widget, aide=""):
         ttk.Label(f, text=texte).grid(row=ligne, column=0, sticky="w", **self.PAD)
         widget.grid(row=ligne, column=1, sticky="w", **self.PAD)
-        lbl = ttk.Label(f, text=aide, foreground="gray")
+        lbl = ttk.Label(f, text=aide, foreground=_GRIS)
         lbl.grid(row=ligne, column=2, sticky="w", **self.PAD)
         return lbl
 
@@ -143,11 +135,10 @@ class PressionGUI:
         pad = self.PAD
         # --- Essai ---
         f = self._bloc("Essai", 0)
-        self._ligne(f, 0, "Date (AAAA_MM_JJ)", ttk.Entry(f, textvariable=self.v["date"], width=16))
         ttk.Label(f, text="Dossier de l'essai").grid(row=1, column=0, sticky="w", **pad)
         l = ttk.Frame(f)
         l.grid(row=1, column=1, columnspan=2, sticky="w", **pad)
-        ttk.Entry(l, textvariable=self.v["dossier_essai"], width=52).grid(row=0, column=0)
+        ttk.Entry(l, textvariable=self.v["dossier_essai"], width=60).grid(row=0, column=0)
         ttk.Button(l, text="…", width=3, command=self._parcourir).grid(row=0, column=1, padx=(4, 0))
         self.cb_source = ttk.Combobox(f, textvariable=self.v["source"], state="readonly", width=20)
         self.lbl_source = self._ligne(f, 2, "Reconstruction", self.cb_source)
@@ -159,7 +150,7 @@ class PressionGUI:
         ttk.Label(f, text="Fichier").grid(row=0, column=0, sticky="w", **pad)
         l = ttk.Frame(f)
         l.grid(row=0, column=1, columnspan=2, sticky="w", **pad)
-        ttk.Entry(l, textvariable=self.v["fichier_pression"], width=52).grid(row=0, column=0)
+        ttk.Entry(l, textvariable=self.v["fichier_pression"], width=60).grid(row=0, column=0)
         ttk.Button(l, text="…", width=3, command=self._parcourir_fichier).grid(row=0, column=1, padx=(4, 0))
         lc = ttk.Frame(f)
         lc.grid(row=1, column=0, columnspan=3, sticky="w", **pad)
@@ -181,7 +172,7 @@ class PressionGUI:
         lt.grid(row=3, column=0, columnspan=3, sticky="w", **pad)
         ttk.Label(lt, text="décalage des horloges (s)").grid(row=0, column=0, padx=(0, 4))
         ttk.Entry(lt, textvariable=self.v["decalage_temps"], width=8).grid(row=0, column=1)
-        ttk.Label(lt, text="temps capteur = temps image + décalage", foreground="gray").grid(row=0, column=2, padx=(6, 14))
+        ttk.Label(lt, text="temps capteur = temps image + décalage", foreground=_GRIS).grid(row=0, column=2, padx=(6, 14))
         ttk.Label(lt, text="pression à chaque image").grid(row=1, column=0, padx=(0, 4), pady=(4, 0), sticky="w")
         ttk.Combobox(lt, textvariable=self.v["interpolation"], state="readonly", values=list(self.INTERPOLATIONS),
                      width=40).grid(row=1, column=1, columnspan=2, sticky="w", pady=(4, 0))
@@ -213,11 +204,6 @@ class PressionGUI:
 
     # ----- dossiers et fichiers -----
 
-    def _suivre_date(self, *_):
-        if self.v["dossier_essai"].get() == self._chemin_auto:
-            self._chemin_auto = Detect3D.chemin_par_defaut(self.v["date"].get().strip())
-            self.v["dossier_essai"].set(self._chemin_auto)
-
     def _parcourir(self):
         _parcourir_essai(self.root, self.v["dossier_essai"], Detect3D.DOSSIER_PARCOURIR)
 
@@ -248,8 +234,7 @@ class PressionGUI:
                         lignes_entete=int(self.v["lignes_entete"].get()))
         except ValueError:
             cols = {}
-        return PressionUz(date=self.v["date"].get().strip(),
-                          dossier_essai=self.v["dossier_essai"].get().strip() or None,
+        return PressionUz(dossier_essai=self.v["dossier_essai"].get().strip() or None,
                           source=self.v["source"].get() or "-",
                           fichier_pression=self.v["fichier_pression"].get().strip() or "data_ali.txt",
                           separateur=sep, **cols, **kw)
@@ -324,9 +309,6 @@ class PressionGUI:
 
     def _on_ok(self):
         erreurs = []
-        date = self.v["date"].get().strip()
-        if not re.fullmatch(r"\d{4}_\d{2}_\d{2}", date):
-            erreurs.append("Date attendue au format AAAA_MM_JJ")
         ct = self._nombre("colonne_temps", "Colonne du temps", erreurs, int, 0)
         cp = self._nombre("colonne_pression", "Colonne de la pression", erreurs, int, 0)
         le = self._nombre("lignes_entete", "Lignes d'en-tête", erreurs, int, 0)
@@ -347,7 +329,7 @@ class PressionGUI:
         if erreurs:
             messagebox.showerror("Paramètres invalides", "\n".join(erreurs), parent=self.root)
             return
-        self.result = PressionUz(date=date, dossier_essai=self.v["dossier_essai"].get().strip(),
+        self.result = PressionUz(dossier_essai=self.v["dossier_essai"].get().strip(),
                                  source=self.v["source"].get(),
                                  fichier_pression=self.v["fichier_pression"].get().strip(),
                                  colonne_temps=ct, colonne_pression=cp, lignes_entete=le,

@@ -16,6 +16,8 @@ Les chemins relatifs partent du dossier courant (celui d'où l'on lance le scrip
 """
 import os
 import glob
+import subprocess
+import sys
 import time
 from pathlib import Path
 import numpy as np
@@ -23,6 +25,45 @@ import matplotlib.pyplot as plt
 
 from Pycaso.detection_spots_suivi import SuiviTaches
 from Pycaso.detection_spots_appariemment import AppariementStereo
+
+
+# Fenêtre d'avertissement lancée dans un processus séparé : le calcul continue pendant
+# qu'elle est affichée (elle se ferme avec OK). Sans écran, rien ne s'affiche (terminal seul).
+_CODE_FENETRE = """
+import sys, tkinter as tk
+from tkinter import ttk
+root = tk.Tk()
+root.title(sys.argv[1])
+root.resizable(False, False)
+root.attributes("-topmost", True)
+orange = "#e65100"
+try:                                   # thème commun (Pycaso/style_gui.py), si on le trouve
+    sys.path.insert(0, sys.argv[3])
+    from Pycaso.style_gui import Style
+    Style.appliquer(root)
+    orange = Style.ORANGE
+except Exception:
+    pass
+cadre = ttk.Frame(root, padding=12)
+cadre.grid()
+ttk.Label(cadre, text="\u26a0", font=("TkDefaultFont", 28), foreground=orange).grid(row=0, column=0, sticky="n", padx=(0, 12))
+ttk.Label(cadre, text=sys.argv[2], justify="left", wraplength=560).grid(row=0, column=1, sticky="w")
+ttk.Button(cadre, text="OK", command=root.destroy).grid(row=1, column=1, sticky="e", pady=(12, 0))
+root.bind("<Return>", lambda _e: root.destroy())
+root.bind("<Escape>", lambda _e: root.destroy())
+root.mainloop()
+"""
+
+
+def avertir(message, titre="Avertissement"):
+    """Affiche message dans le terminal et dans une fenêtre tkinter qui ne bloque pas le calcul."""
+    print(f"\n⚠ {message}\n")
+    try:
+        racine = str(Path(__file__).resolve().parent.parent)      # dossier qui contient Pycaso/
+        subprocess.Popen([sys.executable, "-c", _CODE_FENETRE, titre, message, racine],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass                                   # pas de fenêtre possible : le terminal suffit
 
 
 class DetectionSpots:
@@ -34,9 +75,8 @@ class DetectionSpots:
 
     def __init__(self,
                  # --- Essai à traiter ---
-                 date=None,                     # AAAA_MM_JJ ; None = aujourd'hui
-                 dossier_mesure=None,           # contient video_extenso_left et _right ;
-                                                # None = <date>/gonflement/mesure
+                 dossier_mesure=None,           # dossier de l'essai, contient video_extenso_left et _right ;
+                                                # None = ../../Expériences/<aujourd'hui>/essai1
                  # --- Reprise ---
                  # False : détecte et suit les taches (long). True : relit les résultats enregistrés.
                  gauche_calculated=False,
@@ -61,8 +101,7 @@ class DetectionSpots:
                  tolerance_plan=1.0,            # (étalonnage) écart max (mm) au plan de l'échantillon
                  # --- Affichage ---
                  afficher_figures=True):        # figure de vérification de l'appariement à la fin
-        self.date = date or time.strftime("%Y_%m_%d")
-        self.dossier_mesure = dossier_mesure or self.chemin_par_defaut(self.date)
+        self.dossier_mesure = dossier_mesure or self.chemin_par_defaut(time.strftime("%Y_%m_%d"))
         self.gauche_calculated = gauche_calculated
         self.droite_calculated = droite_calculated
         self.pix = pix
@@ -157,9 +196,9 @@ class DetectionSpots:
         if self.utiliser_etalonnage:                 # cherché avant le suivi (long) pour prévenir tout de suite
             fichier_calib = self.chemin_L_constants()
             if fichier_calib is None:
-                print(f"\n⚠ Aucun étalonnage Lagrange Lpform_{self.l_pform} trouvé "
-                      f"(cherché dans un dossier Results_Calib au-dessus de {self.dossier_mesure}).\n"
-                      "  Appariement sans étalonnage (recalage 2D) à la place.\n")
+                avertir(f"Aucun étalonnage Lagrange Lpform_{self.l_pform} trouvé "
+                        f"(cherché dans un dossier Results_Calib au-dessus de {self.dossier_mesure}).\n"
+                        "Appariement sans étalonnage (recalage 2D) à la place.", "Étalonnage introuvable")
             else:
                 print(f"Étalonnage : {fichier_calib}")
                 L_constants = np.load(fichier_calib)
@@ -172,6 +211,7 @@ class DetectionSpots:
         self.all_pxl, self.all_pyl, nb_g = self.coordonnees_camera(suivi, "left", self.gauche_calculated)
         self.all_pxr, self.all_pyr, nb_d = self.coordonnees_camera(suivi, "right", self.droite_calculated)
         self.figure_nb_points(nb_g, nb_d)
+        self.aligner_images()
 
         # 2. Appariement gauche/droite sur la première image
         appariement = AppariementStereo(L_constants, self.l_pform, self.rayon_recherche,
@@ -206,6 +246,47 @@ class DetectionSpots:
         for f, val in zip(fichiers, (px, py, np.array(nb))):
             np.save(f, val)
         return px, py, nb
+
+    def numeros_images(self, cote, nb):
+        """Numéros (début du nom de fichier) des nb premières images suivies de la caméra cote."""
+        dossier_cam = f"{self.dossier_images}video_extenso_{cote}/"
+        images = sorted(glob.glob(os.path.join(dossier_cam, "[0-9]*")), key=SuiviTaches.numero_image)
+        return [SuiviTaches.numero_image(f) for f in images[:nb]]
+
+    def aligner_images(self):
+        """Garde, pour les deux caméras, les mêmes images (même numéro), dans le même ordre.
+
+        Si une caméra a des photos en plus ou en moins (photo manquante, ou en trop à la fin),
+        Lp_final ne peut associer gauche et droite que sur les images présentes des deux côtés.
+        Les images sont repérées par leur numéro (000012_4.567.tiff -> 12) ; si les numéros ne se
+        correspondent pas, on garde les premières images, autant que la caméra qui en a le moins.
+        """
+        n_g, n_d = len(self.all_pxl), len(self.all_pxr)
+        try:
+            num_g, num_d = self.numeros_images("left", n_g), self.numeros_images("right", n_d)
+        except OSError:
+            num_g, num_d = [], []
+        if len(num_g) == n_g and len(num_d) == n_d and num_g == num_d:
+            return                                                   # cas normal : rien à faire
+        communs = sorted(set(num_g) & set(num_d))
+        par_numero = (len(num_g) == n_g and len(num_d) == n_d and len(set(num_g)) == n_g
+                      and len(set(num_d)) == n_d and len(communs) > 0)
+        if par_numero:
+            iG = [num_g.index(n) for n in communs]
+            iD = [num_d.index(n) for n in communs]
+            seul_g = sorted(set(num_g) - set(communs))
+            seul_d = sorted(set(num_d) - set(communs))
+            detail = (f"images seulement à gauche : {seul_g or 'aucune'} ; "
+                      f"seulement à droite : {seul_d or 'aucune'}")
+        else:
+            n = min(n_g, n_d)
+            iG = iD = list(range(n))
+            detail = f"numéros d'images non comparables : on garde les {n} premières de chaque caméra"
+        avertir(f"Nombre d'images différent : {n_g} à gauche, {n_d} à droite.\n"
+                f"{detail}.\nLp_final.npy est construit sur les {len(iG)} images communes.",
+                "Images des deux caméras")
+        self.all_pxl, self.all_pyl = self.all_pxl[iG], self.all_pyl[iG]
+        self.all_pxr, self.all_pyr = self.all_pxr[iD], self.all_pyr[iD]
 
     # ===== 2. appariement =====
 
@@ -283,7 +364,7 @@ class DetectionSpots:
         ax[2].set_title(f"{nom} des paires retenues (limite {limite:g} {unite})")
         ax[2].legend()
         fig.tight_layout()
-        fig.savefig(f"{self.dossier}appariement.svg", dpi=120)
+        fig.savefig(f"{self.dossier}appariement.png", dpi=120)
         if self.afficher_figures:
             plt.show()
         plt.close(fig)

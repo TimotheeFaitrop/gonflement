@@ -65,8 +65,7 @@ class PressionUz:
 
     def __init__(self,
                  # --- Essai ---
-                 date=None,                 # AAAA_MM_JJ ; None = aujourd'hui
-                 dossier_essai=None,        # ex. <date>/essai1 ; None = <date>/essai1
+                 dossier_essai=None,        # ex. ../../Expériences/2026_10_29/essai1 ; None = <aujourd'hui>/essai1
                  source=None,               # reconstruction (Lpform_4, Lpform_4_corrige...) ; None = la première
                  # --- Pression ---
                  fichier_pression="data_ali.txt",   # nom seul : dans le dossier de l'essai ; sinon chemin
@@ -84,14 +83,13 @@ class PressionUz:
                  centile=100.0,             # 100 = maximum ; 99 ou 99.5 : moins sensible à une tache isolée
                  inverser_z=None,           # None = auto (dôme vers le haut) ; voir Deformation
                  seuil_aberrants=2.0,       # filtre des taches aberrantes (mm), 0 = aucun ; voir Deformation
-                 exclusions_manuelles=True, # retirer les taches exclues à la main (selection_gui)
+                 exclusions_manuelles=True, # retirer les taches exclues à la main (retouche_gui)
                  # --- Résultats ---
                  tracer_temps=True,         # figure supplémentaire : pression et Uz max en fonction du temps
                  enregistrer_resultats=True,
                  enregistrer_figures=True,
                  afficher_figures=True):
-        self.date = date or time.strftime("%Y_%m_%d")
-        self.dossier_essai = dossier_essai or Detect3D.chemin_par_defaut(self.date)
+        self.dossier_essai = dossier_essai or Detect3D.chemin_par_defaut(time.strftime("%Y_%m_%d"))
         if source is None:
             dispo = Deformation(dossier_essai=self.dossier_essai, source="-").sources_disponibles()
             source = dispo[0] if dispo else Deformation.SOURCE_DEFAUT
@@ -200,7 +198,7 @@ class PressionUz:
         """
         if not self.chemin_pression.is_file():
             raise FileNotFoundError(f"Fichier de pression introuvable : {self.chemin_pression}")
-        self.deformation = d = Deformation(date=self.date, dossier_essai=self.dossier_essai, source=self.source,
+        self.deformation = d = Deformation(dossier_essai=self.dossier_essai, source=self.source,
                                            inverser_z=self.inverser_z, seuil_aberrants=self.seuil_aberrants,
                                            exclusions_manuelles=self.exclusions_manuelles)
         if not d._complet(d.dossier_entree):

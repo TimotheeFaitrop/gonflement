@@ -1,6 +1,13 @@
-"""Calibration stéréo (Lagrange / Soloff / Zernike) basée sur Pycaso."""
+"""Calibration stéréo (Lagrange / Soloff / Zernike) basée sur Pycaso.
+
+Les hauteurs du plateau (z de départ, pas, z final) sont lues dans hauteurs_calibration.txt,
+écrit par le programme d'acquisition dans le dossier des images de calibration (voir
+Calibration.lire_hauteurs). Après chaque calcul, une ligne « Calcul … » y est ajoutée.
+"""
 
 import importlib.util
+import re
+import time
 import sys
 from glob import glob
 from pathlib import Path
@@ -38,13 +45,18 @@ class Calibration:
 
     RESULTS_FOLDER = "results_calib"   # créé à côté du dossier des images
 
-    def __init__(self, date, path_images, z_list,
+    FICHIER_HAUTEURS = "hauteurs_calibration.txt"    # écrit par l'acquisition, dans path_images
+
+    def __init__(self, path_images, z_list,
                  left_subfolder="video_extenso_left",
                  right_subfolder="video_extenso_right",
-                 show_plot=True):
-        self.date = date
+                 show_plot=True,
+                 date=None):                # pour les titres ; None = celle de hauteurs_calibration.txt
         self.path_images = Path(path_images)
         self.z_list = np.asarray(z_list)
+        if date is None:
+            date = (self.lire_hauteurs(path_images) or {}).get("date") or self.path_images.resolve().name
+        self.date = date
         self.left_subfolder = left_subfolder
         self.right_subfolder = right_subfolder
         self.show_plot = show_plot
@@ -64,8 +76,73 @@ class Calibration:
     @classmethod
     def from_params(cls, params):
         """Construit l'objet à partir du dictionnaire renvoyé par l'interface."""
-        keys = ("date", "path_images", "z_list", "show_plot")
+        keys = ("path_images", "z_list", "show_plot", "date")
         return cls(**{k: params[k] for k in keys if k in params})
+
+    @staticmethod
+    def liste_z(z_init, z_final, pas):
+        """Hauteurs des plans de z_init à z_final (inclus) par pas (> 0), dans l'ordre des photos.
+
+        ValueError si (z_final − z_init) n'est pas un multiple du pas.
+        """
+        if not pas > 0:
+            raise ValueError("Le pas doit être > 0")
+        n = (z_final - z_init) / pas
+        if abs(n - round(n)) > 1e-6:
+            raise ValueError(f"z_final − z_init ({z_final - z_init:g} mm) n'est pas un multiple du pas ({pas:g} mm)")
+        sens = 1 if z_final >= z_init else -1
+        z = z_init + sens * pas * np.arange(abs(int(round(n))) + 1)
+        return z.astype(int) if np.allclose(z, np.round(z)) else z
+
+    @classmethod
+    def fichier_hauteurs(cls, dossier):
+        """hauteurs_calibration*.txt dans le dossier des images (ou son parent), sinon None."""
+        d = Path(dossier)
+        for ou in (d, d.parent):
+            if ou.is_dir():
+                trouves = sorted(ou.glob("hauteurs_calibration*.txt"))
+                if trouves:
+                    return trouves[0]
+        return None
+
+    @classmethod
+    def lire_hauteurs(cls, dossier):
+        """Lit hauteurs_calibration.txt : dict ou None s'il n'y en a pas.
+
+        Clés : fichier, date, z_init, pas, z_final, nb_plans, z_table (colonne Z du tableau,
+        ou None), mire (ncx, ncy, sqr) ou None. Les valeurs absentes du fichier valent None.
+        """
+        f = cls.fichier_hauteurs(dossier)
+        if f is None:
+            return None
+        texte = f.read_text(encoding="utf-8", errors="replace")
+
+        def valeur(etiquette, conv=float):
+            m = re.search(rf"^{etiquette}[^:\n]*:\s*([-+0-9.,]+)", texte, re.M)
+            return conv(m.group(1).replace(",", ".")) if m else None
+
+        date = re.search(r"^Date de calibration\s*:\s*(\S+)", texte, re.M)
+        mire = re.search(r"^Mire[^:\n]*:\s*(\d+)\s*x\s*(\d+)[^0-9]+([0-9.,]+)\s*mm", texte, re.M)
+        z_table = [float(m.group(1)) for m in
+                   re.finditer(r"^\s*\d+\s+([-+0-9.]+)\s+[-+0-9.]+\s+\S+\.tiff?", texte, re.M | re.I)]
+        return {"fichier": f,
+                "date": date.group(1) if date else None,
+                "z_init": valeur("Hauteur de départ"),
+                "pas": valeur("Pas"),
+                "z_final": valeur("Hauteur finale"),
+                "nb_plans": valeur("Nombre de plans", lambda x: int(float(x))),
+                "z_table": z_table or None,
+                "mire": (int(mire.group(1)), int(mire.group(2)), float(mire.group(3).replace(",", ".")))
+                if mire else None}
+
+    def noter_calcul(self, method, pform, iterations):
+        """Ajoute « Calcul <date> : <méthode>, degré …» à la fin de hauteurs_calibration.txt."""
+        f = self.fichier_hauteurs(self.path_images)
+        if f is None:
+            return
+        with open(f, "a", encoding="utf-8") as fh:
+            fh.write(f"Calcul {time.strftime('%Y-%m-%d %H:%M')} : {method}, degré {pform}, "
+                     f"{iterations} itérations -> {self.results_dir}\n")
 
     # ----- préparation des données -----
 
@@ -90,14 +167,12 @@ class Calibration:
 
     def run(self, method, pform, iterations):
         """Lance la méthode choisie ('Lagrange', 'Soloff' ou 'Zernike')."""
+        if method not in self.METHODS:
+            raise ValueError(f"Méthode inconnue : {method}")
         print(f"\n{self.date}\n#####\n{method} - début de la calibration\n#####")
-        if method == "Lagrange":
-            return self.lagrange(pform, iterations)
-        if method == "Soloff":
-            return self.soloff(pform, iterations)
-        if method == "Zernike":
-            return self.zernike(pform, iterations)
-        raise ValueError(f"Méthode inconnue : {method}")
+        res = {"Lagrange": self.lagrange, "Soloff": self.soloff, "Zernike": self.zernike}[method](pform, iterations)
+        self.noter_calcul(method, pform, iterations)
+        return res
 
     # ----- méthodes de calibration -----
 

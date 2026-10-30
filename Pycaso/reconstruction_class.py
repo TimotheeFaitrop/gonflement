@@ -3,7 +3,7 @@
 Remplace detect3D_Lagrange.py, detect3D_Soloff.py et detect3D_Zernike.py : une seule
 classe, la méthode d'étalonnage est un paramètre.
 
-Organisation des dossiers (dossier_essai = <date>/essai1, choisi par l'utilisateur) :
+Organisation des dossiers (dossier_essai = ex. Expériences/<date>/essai1, choisi par l'utilisateur) :
     <date>/essai1/appariemment_et_suivi/Lp_final.npy   taches appariées (entrée)
     <date>/essai1/reconstruction/Lpform_4/             résultats 3D (X3d.txt, Y3d.txt, Z3d.txt, figures)
     <date>/essai1/mesure/                              images (seulement pour Zernike : taille des caméras)
@@ -47,17 +47,15 @@ class Detect3D:
     # dossier où l'explorateur « … » de l'interface commence la recherche (absolu ou relatif au
     # dossier d'exécution ; "~" accepté). S'il n'existe pas, on remonte au premier parent existant.
     DOSSIER_PARCOURIR = "../../Expériences"
-    FICHIER_INFOS = "reconstruction_infos.json"   # méthode, degré, facteur Z de la reconstruction
+    FICHIER_INFOS = "reconstruction_infos.json"   # méthode, degré de la reconstruction
     SOLOFF_METHODE = "curve_fit"          # méthode de résolution de Soloff_identification
 
     def __init__(self,
                  # --- Essai à traiter ---
-                 date=None,                 # AAAA_MM_JJ ; None = aujourd'hui
-                 dossier_essai=None,        # ex. <date>/essai1 ; None = <date>/essai1
+                 dossier_essai=None,        # ex. ../../Expériences/2026_10_29/essai1 ; None = <aujourd'hui>/essai1
                  # --- Étalonnage ---
                  methode="Lagrange",        # "Lagrange", "Soloff" ou "Zernike"
                  degre=None,                # degré du polynôme ; None = valeur par défaut de la méthode
-                 facteur_z=1.0,            # Z reconstruit × facteur (Z sorti 10× trop petit) ; 1 = brut
                  etat_plat=True,           # True : lit Lp_final_corrige.npy (image 0 = état plat, voir
                                             # correction_class) et écrit dans reconstruction/<tag>_corrige
                  # --- Figures ---
@@ -77,8 +75,7 @@ class Detect3D:
                  afficher_figures=True):    # ouvrir les figures à l'écran
         if methode not in self.METHODES:
             raise ValueError(f"Méthode inconnue : {methode} (choix : {', '.join(self.METHODES)})")
-        self.date = date or time.strftime("%Y_%m_%d")
-        self.dossier_essai = dossier_essai or self.chemin_par_defaut(self.date)
+        self.dossier_essai = dossier_essai or self.chemin_par_defaut(time.strftime("%Y_%m_%d"))
         self.methode = methode
         self.degre = self.METHODES[methode][2] if degre is None else degre
         self.images_a_tracer = tuple(images_a_tracer)
@@ -87,7 +84,6 @@ class Detect3D:
         self.affichage_z = affichage_z
         self.inverser_z = inverser_z
         self.exclusions_manuelles = exclusions_manuelles
-        self.facteur_z = facteur_z
         self.etat_plat = etat_plat
         self.couleurs_fixes = couleurs_fixes
         self.z_min = z_min
@@ -211,7 +207,6 @@ class Detect3D:
             X.append(x); Y.append(y); Z.append(z)
         print()
         self.X, self.Y, self.Z = (np.array(v, dtype=float) for v in (X, Y, Z))
-        self.Z *= self.facteur_z               # correction d'échelle de Z (aussi dans Z3d.txt)
 
         self.enregistrer()
         if self.enregistrer_figures or self.afficher_figures:
@@ -263,9 +258,9 @@ class Detect3D:
         self.dossier_sortie.mkdir(parents=True, exist_ok=True)
         for nom, val in (("X3d", self.X), ("Y3d", self.Y), ("Z3d", self.Z)):
             np.savetxt(self.dossier_sortie / f"{nom}.txt", val)
-        # méthode et facteur Z utilisés : relus par la correction (reconstruction de l'état plat)
+        # méthode utilisée : relus par la correction (reconstruction de l'état plat)
         with open(self.dossier_sortie / self.FICHIER_INFOS, "w", encoding="utf-8") as f:
-            json.dump({"methode": self.methode, "degre": self.degre, "facteur_z": self.facteur_z,
+            json.dump({"methode": self.methode, "degre": self.degre,
                        "etalonnage": str(self.dossier_constantes()), "etat_plat": bool(self.etat_plat)},
                       f, indent=1, ensure_ascii=False)
         marque = self.dossier_sortie / self.FICHIER_CORRECTION

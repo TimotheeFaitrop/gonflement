@@ -13,7 +13,7 @@ construite sur la configuration initiale (image 0) ; on en déduit, pour chaque 
     LE   Hencky eulérien ½ ln(FFᵀ)                   (« LE » d'Abaqus)
     I1, I2  invariants de C
 
-Organisation des dossiers (dossier_essai = <date>/essai1) :
+Organisation des dossiers (dossier_essai = ex. Expériences/<date>/essai1) :
     <essai>/reconstruction/<source>/   X3d.txt, Y3d.txt, Z3d.txt (entrée, source = Lpform_4, nZ_12...)
     <essai>/deformation/<source>/      champs_<n>.npz et figures (sortie)
 """
@@ -66,8 +66,7 @@ class Deformation:
 
     def __init__(self,
                  # --- Essai à traiter ---
-                 date=None,                 # AAAA_MM_JJ ; None = aujourd'hui
-                 dossier_essai=None,        # ex. <date>/essai1 ; None = <date>/essai1
+                 dossier_essai=None,        # ex. ../../Expériences/2026_10_29/essai1 ; None = <aujourd'hui>/essai1
                  source=None,               # sous-dossier de reconstruction/ (Lpform_4, nZ_12...) ; None = le premier trouvé
                  # --- Calcul ---
                  taille_grille=100,         # nombre de points de la grille par côté
@@ -78,7 +77,7 @@ class Deformation:
                  masque="disque",           # "disque", "enveloppe" (des taches) ou "aucun"
                  rayon_masque=1.0,          # rayon du disque / demi-largeur de la zone initiale
                  inverser_z=None,           # changer le signe de Z : None = auto (dôme vers le haut), True / False
-                 exclusions_manuelles=True, # retirer les taches exclues à la main (selection_gui)
+                 exclusions_manuelles=True, # retirer les taches exclues à la main (retouche_gui)
                  seuil_aberrants=2.0,       # tache écartée si son déplacement s'écarte de plus de ce seuil (mm)
                                             # de la médiane de ses voisines ; 0 = pas de filtre
                  # --- Images et figures ---
@@ -107,8 +106,7 @@ class Deformation:
         inconnues += [c for c in composantes if c not in self.COMPOSANTES]
         if inconnues:
             raise ValueError(f"Grandeurs / composantes inconnues : {inconnues}")
-        self.date = date or time.strftime("%Y_%m_%d")
-        self.dossier_essai = dossier_essai or Detect3D.chemin_par_defaut(self.date)
+        self.dossier_essai = dossier_essai or Detect3D.chemin_par_defaut(time.strftime("%Y_%m_%d"))
         if source is None:
             dispo = self.sources_disponibles()
             source = dispo[0] if dispo else self.SOURCE_DEFAUT
