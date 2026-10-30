@@ -188,8 +188,8 @@ class OngletCalibration(ttk.Frame):
 
     # ----------------------------------------------------------------- 2
     def dossier(self, f):
-        """Racine / date / nom de l'essai -> <racine>/<date>/calib/Mesure (images),
-        Photos (photos de réglage) et results_calib (calcul)."""
+        """Racine / date / nom de l'essai -> <racine>/<date>/calib (images),
+        <date>/Photos (photos de réglage) et <date>/results_calib (calcul, règle de Pycaso)."""
         a = self.app
         a.v("calibration.date").set(time.strftime("%Y_%m_%d"))   # aujourd'hui, comme l'original
         a.chemin_choisi(f, 0, "Dossier racine", "materiel.dossier_racine", dossier=True, largeur=60)
@@ -229,7 +229,7 @@ class OngletCalibration(ttk.Frame):
     def _chemin_auto(self):
         a = self.app
         racine = a.v("materiel.dossier_racine").get().rstrip("/")
-        return f"{racine}/{a.v('calibration.date').get()}/{a.v('calibration.nom_essai').get()}/Mesure"
+        return f"{racine}/{a.v('calibration.date').get()}/{a.v('calibration.nom_essai').get()}"
 
     def _suivre_date(self):
         v = self.app.v("calibration.dossier_images")
@@ -241,7 +241,7 @@ class OngletCalibration(ttk.Frame):
 
     def _maj_resultats(self):
         base = self.app.chemin(self._chemin_auto())
-        self.lbl_cible.configure(text=f"Acquisition dans : {base}  (puis Mesure_00001… s'il est "
+        self.lbl_cible.configure(text=f"Acquisition dans : {base}  (puis {base.name}_00001… s'il est "
                                       f"déjà rempli) — photos de réglage dans {base.parent / 'Photos'}")
         p = self.app.v("calibration.dossier_images").get().strip()
         self.lbl_resultats.configure(
@@ -444,8 +444,8 @@ class OngletCalibration(ttk.Frame):
         a = self.app
         n_g, n_d = self._compter(d)
         if not n_g or not n_d:
-            # images ailleurs ? (Mesure_00001… d'une autre acquisition du même essai)
-            voisins = sorted((p for p in d.parent.glob("Mesure*") if p.is_dir() and p != d
+            # images ailleurs ? (calib_00001… d'une autre acquisition du même jour)
+            voisins = sorted((p for p in d.parent.glob(d.name.split("_0")[0] + "*") if p.is_dir() and p != d
                               and min(self._compter(p)) > 0), key=lambda p: p.stat().st_mtime)
             texte = (f"Aucune image dans\n{d}\n(gauche {n_g}, droite {n_d}).")
             if voisins and messagebox.askyesno("Aucune image", texte + "\n\nUtiliser le dossier "
@@ -453,7 +453,7 @@ class OngletCalibration(ttk.Frame):
                 a.v("calibration.dossier_images").set(str(voisins[-1]))
                 return self._verifier_images(voisins[-1])
             if not voisins:
-                messagebox.showerror("Aucune image", texte + "\n\nChoisir le dossier Mesure de "
+                messagebox.showerror("Aucune image", texte + "\n\nChoisir le dossier calib de "
                                      "l'acquisition dans « Images pour le calcul ».")
             return False
         try:

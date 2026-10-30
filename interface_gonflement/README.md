@@ -65,7 +65,7 @@ suivi plus serré, fenêtre ≥ 5 images.
 « Terminer le profil », courbes et valeurs en direct.
 
 **Après l'essai** : « Relancer le même essai » refait un essai avec exactement
-les mêmes paramètres, dans un nouveau dossier `Mesure_0000N`.
+les mêmes paramètres, dans un nouveau dossier `essai_…_0000N`.
 
 **Sécurité** (dans le bloc crappy, donc active même si l'interface plante) :
 pression max (coupure définitive), débit max, variation max du débit, durée max.
@@ -77,12 +77,14 @@ directement à l'Alicat.
 
 ```
 <racine>/2026_10_30/
-  calib/                 calibration : Mesure/ (images), Photos/, results_calib/
-  essai_debit/Mesure/    essai piloté en débit (puis Mesure_00001, …)
-  essai_pression/Mesure/
-  essai_def_Zernike/Mesure/   déformation 3D, modèle Zernike
-  essai_def_Lagrange/Mesure/  déformation 3D, modèle Lagrange
-  essai_def_2D/Mesure/        déformation 2D (VideoExtenso)
+  calib/                images de calibration (video_extenso_left|right)
+  results_calib/        résultats Pycaso (nZ_<n>/A_Zernike.npy, Lpform_<n>/…)
+  Photos/               photos de réglage
+  essai_debit/          essai piloté en débit (puis essai_debit_00001, …)
+  essai_pression/
+  essai_def_Zernike/    déformation 3D, modèle Zernike
+  essai_def_Lagrange/   déformation 3D, modèle Lagrange
+  essai_def_2D/         déformation 2D (VideoExtenso)
 ```
 
 Le champ « Dossier (date) » de l'onglet Essai remplace `<racine>/<date>` si on
@@ -94,9 +96,10 @@ consigne, mesure, commande, état) + `parametres_essai.json`.
 ## Onglet Calibration
 
 En haut, toujours visible : **dossier de calibration** (racine choisie en
-parcourant le PC, date, nom de l'essai, images pour le calcul). Tout va dans
-`<racine>/<date>/calib/` : `Mesure/` (images), `Photos/`, `results_calib/`
-(nom `calib` modifiable).
+parcourant le PC, date, nom de l'essai, images pour le calcul). Images dans
+`<racine>/<date>/calib/` (nom modifiable), résultats dans `<racine>/<date>/results_calib/`
+(Pycaso met toujours les résultats à côté du dossier d'images), photos de réglage
+dans `<racine>/<date>/Photos/`.
 
 Mêmes paramètres et valeurs par défaut que les programmes du dépôt :
 
@@ -105,14 +108,14 @@ Mêmes paramètres et valeurs par défaut que les programmes du dépôt :
    (Z = 70), changer l'origine Z (G92 : la position actuelle prend la valeur
    saisie, jusqu'à la prochaine prise d'origine G28), aperçu des deux caméras,
    **prendre une photo** avec chaque caméra (TIFF pleine résolution dans
-   `<racine>/<date>/calib/Photos`, affichées directement), test des caméras, aller à un Z.
+   `<racine>/<date>/Photos`, affichées directement), test des caméras, aller à un Z.
 2. **Essai et plans z** : dossier racine (choisi en parcourant le PC), date
    (aujourd'hui), dossier de calibration (`calib`). Les images
-   vont dans `<racine>/<date>/calib/Mesure` (puis `Mesure_00001`… s'il est déjà
+   vont dans `<racine>/<date>/calib` (puis `calib_00001`… s'il est déjà
    rempli), avec `video_extenso_left/` et `video_extenso_right/`. Plans donnés par
    **Z départ, Z fin (incluse) et pas** : 70 → 32 par 2 = 20 plans, comme avant.
    « Images pour le calcul » suit ce dossier (modifiable pour un ancien essai) ;
-   résultats dans `<racine>/<date>/calib/results_calib`.
+   résultats dans `<racine>/<date>/results_calib`.
 3. **Acquisition en boucle fermée** (`sequence_calibration.py`) : origine (G28)
    puis directement Z départ (plus de passage par Z = 70) ; pour chaque
    plan, le plateau va à la hauteur, la position lue (M114.2) doit être atteinte

@@ -143,7 +143,7 @@ class OngletEssai(ttk.Frame):
         self.btn_relancer = ttk.Button(f, text="↻  Relancer le même essai", command=self.relancer)
         self.btn_relancer.pack(fill="x", pady=2)
         Bulle(self.btn_relancer, "Mêmes paramètres que l'essai précédent, nouveau dossier "
-                                 "Mesure_0000N (les champs modifiés depuis sont ignorés)")
+                                 "essai_…_0000N (les champs modifiés depuis sont ignorés)")
         self.btn_stop = ttk.Button(f, text="■  Arrêter l'essai", command=a.arreter,
                                    state="disabled")
         self.btn_stop.pack(fill="x", pady=2)
@@ -256,7 +256,7 @@ class OngletEssai(ttk.Frame):
         except Exception:
             return
         aide = "" if choisi else "  (dossier vide : racine/date)"
-        self.lbl_prevu.configure(text=f"Données dans : {base}/{nom}/Mesure…{aide}")
+        self.lbl_prevu.configure(text=f"Données dans : {base}/{nom}{aide}")
 
     # ------------------------------------------------ calibrations 3D faites
     def chercher_calibrations(self, silencieux=True):
@@ -360,7 +360,7 @@ class OngletEssai(ttk.Frame):
         with open(fichier, encoding="utf-8") as f:
             cfg = json.load(f)
         if not messagebox.askokcancel("Relancer l'essai ?", "Mêmes paramètres que l'essai "
-                                      "précédent, données dans un nouveau dossier Mesure.\n\n"
+                                      "précédent, données dans un nouveau dossier essai_…_0000N.\n\n"
                                       + resume(cfg)):
             return
         a.preparer_cameras(lambda: self._lancer(fichier, cfg))

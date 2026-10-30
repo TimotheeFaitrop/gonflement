@@ -33,7 +33,7 @@ DEFAUTS = {
     },
     "essai": {
         "echantillon": "Pro_Grip",
-        "dossier": "",                    # vide = <racine>/<date> ; puis /essai_<mode>/Mesure
+        "dossier": "",                    # vide = <racine>/<date> ; puis /essai_<mode>[_<méthode>]
         "mode": "debit",                  # "debit" | "pression" | "deformation"
         "freq_cam": 2.5,                  # Hz, déclenchement FT232R
         "sauver_images": True,
@@ -78,7 +78,7 @@ DEFAUTS = {
         "z_depart": 70.0,
         "pas_z": 2.0,
         "z_fin": 32.0,                    # dernière hauteur photographiée (incluse)
-        "nom_essai": "calib",             # <racine>/<date>/calib/Mesure
+        "nom_essai": "calib",             # <racine>/<date>/calib
         "stabilisation": 1.0,             # s immobile à la bonne hauteur avant la photo
         "vitesse_plateau": 100.0,         # mm/min (G0 F, comme calib_crappy_V2)
         "expo_droite": 41389,
@@ -87,7 +87,7 @@ DEFAUTS = {
         "z_reglage": 70.0,                # hauteur pour "Aller à Z"
         # comme Pycaso/calibration_gui.py
         "date": "",                       # vide = aujourd'hui (AAAA_MM_JJ)
-        "dossier_images": "",             # vide = <racine>/<date>/calib/Mesure
+        "dossier_images": "",             # vide = <racine>/<date>/calib
         "methode": "Lagrange",
         "pform": "4",
         "iterations": 10,
@@ -115,6 +115,8 @@ def charger(fichier=FICHIER_REGLAGES):
     except (OSError, ValueError):
         return copy.deepcopy(DEFAUTS)
     cal = r["calibration"]
+    if cal.get("dossier_images", "").replace("\\", "/").rstrip("/").endswith("/Mesure"):
+        cal["dossier_images"] = ""                     # ancien <date>/calib/Mesure
     if cal.get("nom_essai") == "Mvt_Rigide":         # ancienne organisation des dossiers
         cal["nom_essai"] = "calib"
         if "/Mvt_Rigide/" in cal.get("dossier_images", "").replace("\\", "/"):
@@ -218,7 +220,7 @@ def nom_dossier_essai(ess):
 def dossier_base_essai(cfg, date):
     """<racine>/<date>/essai_<mode>[_<méthode>] ; si un dossier est choisi dans
     l'interface, il remplace <racine>/<date>. Les données vont dans
-    <ce dossier>/Mesure (puis Mesure_00001, ...)."""
+    ce dossier (puis <ce dossier>_00001, ...)."""
     ess = cfg["essai"]
     choisi = ess.get("dossier", "").strip()
     base = Path(choisi) if choisi else Path(cfg["materiel"]["dossier_racine"]) / date

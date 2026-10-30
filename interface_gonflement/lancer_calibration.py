@@ -117,8 +117,8 @@ def acquisition(cfg):
     z = zl(cal)
     t_plan = temps_par_plan(cal)
 
-    # <racine>/<date>/calib/Mesure (puis Mesure_00001…)
-    dossier = dossier_unique(Path(mat["dossier_racine"]) / cal["date"] / cal["nom_essai"] / "Mesure")
+    # <racine>/<date>/calib (puis calib_00001…) ; Pycaso met les résultats dans <date>/results_calib
+    dossier = dossier_unique(Path(mat["dossier_racine"]) / cal["date"] / cal["nom_essai"])
     print(f"DOSSIER_CALIB={dossier.resolve()}", flush=True)
     ecrire_document(dossier, cfg, "acquisition en cours")
     from sequence_calibration import duree_estimee
@@ -219,7 +219,7 @@ def nettoyer_dossiers_cameras(dossier):
 def invalider_cache(dossier_resultats, images):
     """Pycaso réutilise all_X / all_xth / nb_pts s'ils existent, sans regarder les
     images. On les efface si les images ne sont plus les mêmes que lors du calcul
-    précédent (autre dossier Mesure, nouvelle acquisition, détection ratée)."""
+    précédent (autre dossier calib, nouvelle acquisition, détection ratée)."""
     dossier_resultats.mkdir(parents=True, exist_ok=True)
     signature = [[str(p), p.stat().st_size, int(p.stat().st_mtime)] for p in images]
     tampon = dossier_resultats / "images_utilisees.json"
@@ -354,7 +354,7 @@ def calcul(cfg):
     print(f"Images trouvées : gauche {len(g)}, droite {len(d)}, plans {len(z)}", flush=True)
     if not g or not d:
         sys.exit(f"ERREUR : aucune image dans {dossier}/video_extenso_left ou _right. "
-                 "Vérifier « Images pour le calcul » (dossier Mesure de l'acquisition).")
+                 "Vérifier « Images pour le calcul » (dossier calib de l'acquisition).")
     if not len(g) == len(d) == len(z):
         sys.exit("ERREUR : Pycaso associe l'image n à la hauteur n : il faut autant d'images "
                  f"à gauche ({len(g)}) et à droite ({len(d)}) que de plans ({len(z)}). "
