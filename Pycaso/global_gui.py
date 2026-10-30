@@ -413,9 +413,16 @@ class Chaine:
         return self.source
 
     def _revoir_reconstruction(self):
-        """Retrace les figures de la reconstruction (taches exclues retirées), sans recalculer."""
+        """Rouvre la fenêtre de la reconstruction (réglages précédents) puis retrace les figures.
+
+        On peut y rechoisir les images à tracer, l'axe vertical, l'échelle de couleur... Les taches
+        exclues sont retirées des figures. Rien n'est recalculé si X3d / Y3d / Z3d existent déjà pour
+        la méthode et le degré choisis (sinon la reconstruction est calculée).
+        Renvoie False si la fenêtre a été annulée.
+        """
         import numpy as np
         from Pycaso.reconstruction_class import Detect3D
+        from Pycaso.reconstruction_gui import Detect3DGUI, _ecrire_images
         det = self.detect
         if det is None or det.dossier_sortie.name != self.source:
             info = source_vers_methode(self.source)
@@ -424,12 +431,38 @@ class Chaine:
             methode, degre, plat = info
             det = Detect3D(dossier_essai=self.essai, dossier_calib=self.dossier_calib, methode=methode,
                            degre=degre, etat_plat=plat)
-            self.detect = det
-        if not hasattr(det, "X"):
-            det.X, det.Y, det.Z = (np.loadtxt(det.dossier_sortie / f"{n}3d.txt", ndmin=2) for n in "XYZ")
-        det.afficher_figures = True
-        for n in det.images_a_tracer:
-            det.tracer(n)
+
+        # fenêtre préremplie avec les réglages de la dernière reconstruction / revue
+        g = Detect3DGUI(dossier_calib=self.dossier_calib)
+        g.root.title("Revoir les figures de la reconstruction (sans recalcul si elle existe)")
+        g.v["dossier_essai"].set(self.essai)
+        g.v["etat_plat"].set(det.etat_plat)
+        g.v["methode"].set(det.methode)
+        g._maj_degres()
+        g.v["degre"].set(str(det.degre))
+        g.v["images_a_tracer"].set(_ecrire_images(det.images_a_tracer))
+        g.v["affichage_z"].set(det.affichage_z)
+        for cle in ("couleurs_fixes", "inverser_z", "enregistrer_figures"):
+            g.v[cle].set(bool(getattr(det, cle)))
+        for cle in ("z_min", "z_bleu", "z_jaune", "z_max"):
+            g.v[cle].set(f"{getattr(det, cle):g}")
+        g.v["afficher_figures"].set(True)
+        g._maj_couleurs()
+        g._maj()
+        nouveau = g.ask()
+        if nouveau is None:
+            return False
+
+        if all((nouveau.dossier_sortie / f"{n}3d.txt").is_file() for n in "XYZ"):
+            nouveau.X, nouveau.Y, nouveau.Z = (np.loadtxt(nouveau.dossier_sortie / f"{n}3d.txt", ndmin=2)
+                                               for n in "XYZ")
+            for n in nouveau.images_a_tracer:
+                nouveau.tracer(n)
+        else:                                  # autre méthode / degré, pas encore calculé : on le calcule
+            print(f"{nouveau.dossier_sortie} absent : reconstruction calculée")
+            nouveau.lancer()
+        self.detect = nouveau                  # réglages gardés pour la revue suivante
+        return True
 
     def etape_5(self):
         from Pycaso.retouche_class import EditeurExclusions
