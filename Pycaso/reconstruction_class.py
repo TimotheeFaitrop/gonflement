@@ -56,6 +56,8 @@ class Detect3D:
                  # --- Étalonnage ---
                  methode="Lagrange",        # "Lagrange", "Soloff" ou "Zernike"
                  degre=None,                # degré du polynôme ; None = valeur par défaut de la méthode
+                 dossier_calib=None,        # dossier d'étalonnage (results_calib) à utiliser en priorité ;
+                                            # None = Results_Calib cherché dans l'essai puis au-dessus
                  etat_plat=True,           # True : lit Lp_final_corrige.npy (image 0 = état plat, voir
                                             # correction_class) et écrit dans reconstruction/<tag>_corrige
                  # --- Figures ---
@@ -69,8 +71,8 @@ class Detect3D:
                  couleurs_fixes=False,      # échelle de couleur fixe (sinon : min/max des données)
                  z_min=-10.0,               # bas de l'échelle fixe (mm), violet foncé
                  z_bleu=0.0,                # Z (mm) affiché en bleu
-                 z_jaune=60.0,              # Z (mm) affiché en jaune
-                 z_max=100.0,               # haut de l'échelle fixe (mm), jaune vif
+                 z_jaune=30.0,              # Z (mm) affiché en jaune
+                 z_max=50.0,               # haut de l'échelle fixe (mm), jaune vif
                  enregistrer_figures=True,  # enregistrer les figures en .svg dans dossier_sortie
                  afficher_figures=True):    # ouvrir les figures à l'écran
         if methode not in self.METHODES:
@@ -85,6 +87,7 @@ class Detect3D:
         self.inverser_z = inverser_z
         self.exclusions_manuelles = exclusions_manuelles
         self.etat_plat = etat_plat
+        self.dossier_calib = dossier_calib
         self.couleurs_fixes = couleurs_fixes
         self.z_min = z_min
         self.z_bleu = z_bleu
@@ -145,6 +148,8 @@ class Detect3D:
     def dossiers_calib(self):
         """Dossiers Results_Calib trouvés dans l'essai ou au-dessus, du plus proche au plus loin."""
         trouves = []
+        if self.dossier_calib and Path(self.dossier_calib).is_dir():      # dossier imposé : en premier
+            trouves.append(Path(self.dossier_calib).resolve())
         essai = Path(self.dossier_essai).resolve()
         for parent in [essai, *essai.parents]:
             for nom in self.NOMS_DOSSIER_CALIB:

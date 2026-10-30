@@ -169,8 +169,10 @@ class Detect3DGUI:
     PAD = _PAD
     VERT, ORANGE, ROUGE = _VERT, _ORANGE, _ROUGE
 
-    def __init__(self):
+    def __init__(self, dossier_calib=None):
+        """dossier_calib : dossier d'étalonnage (results_calib) à utiliser en priorité, ou None."""
         self.result = None
+        self.dossier_calib = dossier_calib
         self.root = tk.Tk()
         self.root.title("Reconstruction 3D des taches")
         self.root.resizable(False, False)
@@ -316,7 +318,7 @@ class Detect3DGUI:
 
     def _courant(self, degre=None):
         """Detect3D portant le dossier et la méthode saisis (pour les chemins)."""
-        return Detect3D(dossier_essai=self.v["dossier_essai"].get().strip() or None,
+        return Detect3D(dossier_essai=self.v["dossier_essai"].get().strip() or None, dossier_calib=self.dossier_calib,
                         methode=self.v["methode"].get(), degre=degre, etat_plat=self.v["etat_plat"].get())
 
     def _maj_degres(self, *_):
@@ -378,7 +380,7 @@ class Detect3DGUI:
         except ValueError:
             images = ()
             erreurs.append("Images à tracer : entiers ou plages a:b séparés par des virgules (ex. 0, 10:20, -1)")
-        echelle = dict(z_min=-10.0, z_bleu=0.0, z_jaune=60.0, z_max=100.0)
+        echelle = dict(z_min=-10.0, z_bleu=0.0, z_jaune=30.0, z_max=50.0)
         if self.v["couleurs_fixes"].get():
             try:
                 echelle = {k: float(self.v[k].get().replace(",", ".")) for k in echelle}
@@ -408,7 +410,7 @@ class Detect3DGUI:
             messagebox.showerror("Paramètres invalides", "\n".join(erreurs), parent=self.root)
             return
 
-        self.result = Detect3D(dossier_essai=self.v["dossier_essai"].get().strip(),
+        self.result = Detect3D(dossier_essai=self.v["dossier_essai"].get().strip(), dossier_calib=self.dossier_calib,
                                methode=self.v["methode"].get(), degre=degre,
                                images_a_tracer=images,
                                couleurs_fixes=self.v["couleurs_fixes"].get(),

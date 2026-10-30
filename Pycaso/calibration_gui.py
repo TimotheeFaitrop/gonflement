@@ -66,8 +66,11 @@ def _nb_images(dossier):
     return res
 
 
-def ask_parameters():
-    """Ouvre la fenêtre et renvoie un dict de paramètres, ou None si annulé."""
+def ask_parameters(path_images=None):
+    """Ouvre la fenêtre et renvoie un dict de paramètres, ou None si annulé.
+
+    path_images : dossier des images proposé (None = la calibration la plus récente).
+    """
     root = tk.Tk()
     root.title("Calibration stéréo - Pycaso")
     root.resizable(False, False)
@@ -76,7 +79,7 @@ def ask_parameters():
     result = {}
 
     v = {
-        "path_images": tk.StringVar(value=_calib_recente()),
+        "path_images": tk.StringVar(value=path_images or _calib_recente()),
         "method": tk.StringVar(value="Lagrange"),
         "pform": tk.StringVar(value="4"),
         "iterations": tk.IntVar(value=10),
@@ -278,12 +281,12 @@ def _browse(parent, var):
         var.set(d if rel.startswith("..") else rel)
 
 
-def run_calibration_gui():
+def run_calibration_gui(path_images=None):
     """Demande les paramètres via la fenêtre puis lance la calibration.
 
     Renvoie (résultat de la calibration, paramètres) ou None si annulé.
     """
-    params = ask_parameters()
+    params = ask_parameters(path_images)
     if params is None:
         print("Calibration annulée")
         return None
