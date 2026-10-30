@@ -63,11 +63,17 @@ def importer_pycaso():
 
 def taille_cameras(fichier_constantes, taille_defaut):
     """[lignes g, colonnes g, lignes d, colonnes d], lue sur la première image de
-    calibration si on la trouve (<date>/calib/video_extenso_left), sinon taille_defaut."""
+    calibration si on la trouve (<date>/calib/Mesure/video_extenso_left), sinon taille_defaut."""
+    try:
+        from . import compat_cv2
+    except ImportError:
+        import compat_cv2
+    compat_cv2.installer()
     try:
         import cv2
         resultats = Path(fichier_constantes).resolve().parent.parent  # results_calib
-        for calib in sorted(resultats.parent.glob("calib*")):
+        dossier = resultats.parent          # <date>/calib (ou ancien <date>)
+        for calib in sorted([*dossier.glob("Mesure*"), *dossier.glob("calib*")]):
             dims = []
             for cote in ("video_extenso_left", "video_extenso_right"):
                 imgs = sorted(p for p in (calib / cote).glob("*")

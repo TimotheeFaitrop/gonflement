@@ -42,6 +42,26 @@ class OngletMateriel(ttk.Frame):
         a.champ(f, 4, "Taille d'image", "materiel.taille_image", "px")
         a.champ(f, 5, "URL du FT232R", "materiel.url_ftdi", largeur=30)
 
+        f = a.cadre(g, "Acquisition des images — essai")
+        a.champ(f, 0, "Fréquence des images", "essai.freq_cam", "Hz",
+                aide="Déclenchement des deux caméras par le FT232R")
+        a.case(f, 1, "Enregistrer les images", "essai.sauver_images")
+        a.case(f, 2, "Ouvrir aussi les fenêtres Grapher de crappy", "essai.graphers_crappy")
+
+        f = a.cadre(g, "Acquisition des images — calibration")
+        a.champ(f, 0, "Exposition gauche", "calibration.expo_gauche", "µs")
+        a.champ(f, 1, "Exposition droite", "calibration.expo_droite", "µs")
+        a.champ(f, 2, "Stabilisation avant photo", "calibration.stabilisation", "s",
+                aide="Temps pendant lequel le plateau doit rester à la bonne hauteur "
+                     "(position lue) avant le déclenchement des caméras")
+        a.champ(f, 3, "Vitesse du plateau", "calibration.vitesse_plateau", "mm/min")
+        a.case(f, 4, "Afficher le graphe de la hauteur du plateau (Grapher crappy)",
+               "calibration.graphe_hauteur")
+        a.note(f, 5, "Plan par plan : le plateau va à la hauteur, la position lue doit être "
+                     "atteinte et stable, puis les deux caméras sont déclenchées ; on attend "
+                     "les deux images avant le plan suivant. Lancement depuis l'onglet "
+                     "Calibration (section 3).", 620)
+
         f = a.cadre(g, "Imprimante 3D (plateau)")
         a.champ(f, 0, "Port série", "materiel.port_imprimante", largeur=18)
 

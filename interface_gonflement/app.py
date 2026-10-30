@@ -70,6 +70,8 @@ class Application(Formulaire, tk.Tk):
         self.onglets.add(self.essai, text="Essai")
         self.materiel = OngletMateriel(self.onglets, self)
         self.onglets.add(self.materiel, text="Matériel")
+        self.onglets.bind("<<NotebookTabChanged>>", lambda e: (
+            self.onglets.select() == str(self.essai) and self.essai.chercher_calibrations()))
         self.maj_bandeau()
         self.protocol("WM_DELETE_WINDOW", self.quitter)
         self.after(800, self._restes_au_demarrage)

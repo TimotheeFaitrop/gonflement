@@ -26,8 +26,8 @@ import time
 import crappy
 
 # Codes d'état envoyés sous le label 'etat'
-ATTENTE, RAMPE, PALIER, FIN, PAUSE, SECURITE = 0, 1, 2, 3, 4, 5
-NOMS_ETATS = {ATTENTE: "attente", RAMPE: "rampe", PALIER: "palier",
+ATTENTE, RAMPE, PALIER, FIN, PAUSE, SECURITE, TENSION = 0, 1, 2, 3, 4, 5, 6
+NOMS_ETATS = {TENSION: "mise en tension", ATTENTE: "attente", RAMPE: "rampe", PALIER: "palier",
               FIN: "fin du profil", PAUSE: "pause", SECURITE: "SÉCURITÉ"}
 
 
@@ -386,26 +386,57 @@ class PilotagePression(_Pilotage):
 
 # --------------------------------------------------------------------------
 class PilotageDeformation(_Pilotage):
-    """Consigne de déformation (%) atteinte à vitesse imposée (%/s).
+    """Consigne de déformation (%) atteinte à vitesse imposée (%/s), pilotée en
+    VITESSE de déformation.
 
-    La mesure vient des caméras (VideoExtenso 2D ou reconstruction 3D), à la
-    fréquence de déclenchement. Le PI n'est mis à jour qu'à chaque nouvelle
-    mesure ; sans mesure pendant `timeout_mesure` s, le débit est coupé.
-    Pause = la cible est gelée (maintien de la déformation).
+    Pour une membrane gonflée, le débit fixe la vitesse de déformation :
+    dε/dt ≈ Q / G, où G (mL/min par %/s) varie lentement au cours de l'essai.
+    Un PI sur la position ε s'y prête mal : pendant le volume mort (cellule à
+    remplir, membrane à tendre) ε ne bouge pas, l'intégrale grossit, le débit
+    monte linéairement, puis la membrane réagit d'un coup et dépasse la cible.
+
+    Ici, à chaque nouvelle mesure (fréquence des caméras) :
+      1. droite des moindres carrés sur les mesures des `fenetre` dernières
+         secondes -> ε filtrée et vitesse dε/dt (le bruit des taches est lissé) ;
+      2. mise en tension : débit constant `debit_tension` jusqu'à ce que ε ait
+         augmenté de `seuil_tension` ; la rampe part alors de la ε atteinte ;
+      3. vitesse voulue r = vitesse de la rampe + (cible − ε) / tau ;
+      4. débit Q = G × r, avec G réestimé en continu (volume injecté / Δε sur un
+         horizon long, au moins 0,3 % de déformation, pour que le bruit des taches
+         ne fasse pas varier G), donc adapté au raidissement de la membrane.
+    Pause : cible gelée, r = (cible − ε)/tau maintient la déformation.
+    Sans mesure pendant `timeout_mesure` s : débit coupé.
     """
 
-    def __init__(self, kp=20.0, ki=2.0, kff=0.0, timeout_mesure=5.0, **kw):
+    def __init__(self, debit_tension=13.2, seuil_tension=0.15, tau=8.0, fenetre=3.0,
+                 timeout_mesure=5.0, **kw):
         super().__init__(**kw)
-        self._kp, self._ki, self.kff = kp, ki, float(kff)
+        self.debit_tension = float(debit_tension)
+        self.seuil_tension = float(seuil_tension)
+        self.tau = max(0.5, float(tau))
+        self.fenetre = max(1.0, float(fenetre))
         self.timeout_mesure = float(timeout_mesure)
-        self.labels = self.labels + ["eps"]
+        self.labels = self.labels + ["eps", "eps_f", "vitesse_eps", "gain"]
 
     def prepare(self):
         super().prepare()
-        self.pi = _PI(self._kp, self._ki, self.debit_max)
+        from collections import deque
+        self.mes = deque()              # (t, ε) mesurées, fenêtre courte (filtrage)
+        self.mes_g = deque()            # (t, ε) mesurées, horizon long (gain)
+        self.debits = deque()           # (t, Q appliqué), horizon long
         self.t_mesure = None
         self.debit_courant = 0.0
+        self.en_tension = True
+        self.t_tension = 0.0
         self.eps0 = None
+        self.eps_f, self.vitesse_eps, self.G = None, 0.0, None
+
+    # ---- profil : pas de rampe pendant la mise en tension
+    def _avancer_cible(self, dt, maintenant):
+        if self.en_tension:
+            self.etat = TENSION
+            return
+        super()._avancer_cible(dt, maintenant)
 
     def _mesure_eps(self):
         return self.estimateur.calcule(self.dernier)
@@ -420,23 +451,112 @@ class PilotageDeformation(_Pilotage):
         self.t_mesure = time.time()
         return min(self.eps0, self.consigne)
 
+    # ---- estimation
+    @property
+    def horizon_gain(self):
+        """Durée pour ~0,3 % de déformation à la vitesse demandée (bornée 2 fenêtres–60 s)."""
+        return min(60.0, max(2 * self.fenetre, 0.3 / max(self.vitesse, 1e-3)))
+
+    @staticmethod
+    def _droite(points, maintenant, duree_min):
+        """Moindres carrés sur [(t, ε)] : (ε au temps `maintenant`, pente) ;
+        pente None si trop peu de points."""
+        if len(points) < 3 or points[-1][0] - points[0][0] < duree_min:
+            return (points[-1][1] if points else None), None
+        n = len(points)
+        tm = sum(t for t, _ in points) / n
+        em = sum(e for _, e in points) / n
+        stt = sum((t - tm) ** 2 for t, _ in points)
+        pente = sum((t - tm) * (e - em) for t, e in points) / stt if stt > 0 else 0.0
+        return em + pente * (maintenant - tm), pente
+
+    def _ajuster(self, maintenant):
+        """ε filtrée et dε/dt sur la fenêtre courte."""
+        while self.mes and maintenant - self.mes[0][0] > self.fenetre:
+            self.mes.popleft()
+        return self._droite(list(self.mes), maintenant, 0.4 * self.fenetre)
+
+    def _debit_moyen(self, maintenant, duree):
+        pts = [q for t, q in self.debits if maintenant - t <= duree]
+        return sum(pts) / len(pts) if pts else 0.0
+
     def _calcul_debit(self, dt, nouveau, maintenant):
+        self.debits.append((maintenant, self.debit))
         if any(l in nouveau for l in self.estimateur.labels):
             eps = self._mesure_eps()
             if eps is not None:
-                dt_mes = maintenant - self.t_mesure
                 self.t_mesure = maintenant
                 self.mesure = eps
-                anticip = self.kff * self._vitesse_cible()
-                self.debit_courant = self.pi(self.cible - eps, dt_mes, anticip)
+                self.mes.append((maintenant, eps))
+                self.mes_g.append((maintenant, eps))
+                while self.mes_g and maintenant - self.mes_g[0][0] > self.horizon_gain:
+                    self.mes_g.popleft()
+                while self.debits and maintenant - self.debits[0][0] > self.horizon_gain:
+                    self.debits.popleft()
+                self.debit_courant = self._nouveau_debit(maintenant)
         if maintenant - self.t_mesure > self.timeout_mesure:
             if self.debit_courant > 0:
                 self.log(30, "Plus de mesure de déformation : débit coupé")
             self.debit_courant = 0.0
         return self.debit_courant
 
+    def _nouveau_debit(self, maintenant):
+        eps_f, pente = self._ajuster(maintenant)
+        self.eps_f = eps_f
+        q_moy = self._debit_moyen(maintenant, self.fenetre)
+        if pente is not None:
+            self.vitesse_eps = pente
+
+        if self.en_tension:
+            if eps_f - self.eps0 >= self.seuil_tension:
+                # la membrane se déforme : gain initial et début de la rampe à ε atteinte
+                v = pente if pente and pente > 0 else self.seuil_tension / self.fenetre
+                # au démarrage la pente est sous-estimée (ε vient juste de bouger) : le gain
+                # est borné pour ne pas dépasser le débit de mise en tension à la vitesse visée
+                self.G = min(max(q_moy, self.debit_tension) / v,
+                             self.debit_tension / max(self.vitesse, 1e-3))
+                self.en_tension = False
+                self.cible = min(eps_f, self.consigne)
+                self.etat = RAMPE
+                self.mes_g.clear()           # le gain se réestime sur la membrane tendue
+                self.mes_g.append((maintenant, eps_f))
+                self.t_tension = maintenant
+                self.log(20, f"Membrane en tension (ε = {eps_f:.3f} %) : début de la rampe, "
+                             f"gain initial {self.G:.0f} mL/min par %/s")
+            else:
+                return self.debit_tension
+
+        # juste après la mise en tension, la membrane continue sur sa lancée : la
+        # rampe repart de la déformation atteinte plutôt que de l'attendre
+        if (maintenant - self.t_tension < 3 * self.fenetre and eps_f > self.cible
+                and not self.en_pause):
+            self.cible = min(eps_f, self.consigne)
+
+        # juste après la mise en tension : gain réajusté vite sur la fenêtre courte
+        if (maintenant - self.t_tension < 3 * self.fenetre and pente is not None
+                and pente > 0.5 * self.vitesse and q_moy > 0.5):
+            g = min(max(q_moy / pente, self.G / 1.5), 1.5 * self.G)
+            self.G += 0.4 * (g - self.G)
+            return max(0.0, self.G * (self._vitesse_cible() + (self.cible - eps_f) / self.tau))
+
+        # réestimation du gain sur l'horizon long, si la déformation y a assez avancé
+        pts = list(self.mes_g)
+        _, pente_g = self._droite(pts, maintenant, 0.5 * self.horizon_gain)
+        duree_g = pts[-1][0] - pts[0][0] if pts else 0.0
+        q_g = self._debit_moyen(maintenant, duree_g)
+        if pente_g is not None and pente_g * duree_g > 0.1 and q_g > 0.5:
+            g = min(max(q_g / pente_g, self.G / 1.5), 1.5 * self.G)
+            self.G += 0.2 * (g - self.G)
+
+        r = self._vitesse_cible() + (self.cible - eps_f) / self.tau
+        return max(0.0, self.G * r)
+
     def _donnees_sup(self):
-        return {"eps": float("nan") if self.mesure is None else self.mesure}
+        nan = float("nan")
+        return {"eps": nan if self.mesure is None else self.mesure,
+                "eps_f": nan if self.eps_f is None else self.eps_f,
+                "vitesse_eps": self.vitesse_eps,
+                "gain": nan if self.G is None else self.G}
 
 
 # --------------------------------------------------------------------------

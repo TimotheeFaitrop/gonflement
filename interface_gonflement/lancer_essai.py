@@ -27,6 +27,9 @@ import crappy  # noqa: E402
 import blocs_pilotage as bp  # noqa: E402
 import simulation  # noqa: E402,F401  enregistre AlicatSimule
 from reglages import dossier_base_essai, dossier_unique  # noqa: E402
+import compat_cv2  # noqa: E402
+
+compat_cv2.installer()     # chemins accentués sous Windows (images enregistrées par crappy)
 
 # crappy ne garde qu'une référence faible vers les blocs : on les conserve ici,
 # sinon un bloc créé directement dans crappy.link(...) disparaît.
@@ -203,7 +206,8 @@ def main(fichier_config):
         controleur = bp.PilotageDeformation(
             consigne=float(d["eps_max"]), vitesse=float(d["vitesse"]),
             duree_palier=float(d["duree_palier"]),
-            kp=float(d["kp"]), ki=float(d["ki"]), kff=float(d["kff"]),
+            debit_tension=float(d["debit_tension"]), seuil_tension=float(d["seuil_tension"]),
+            tau=float(d["tau"]), fenetre=float(d["fenetre"]),
             timeout_mesure=float(d["timeout_mesure"]),
             estimateur=estimateur, **commun)
         sources = [source_3d] if source_3d else [ver, vel]

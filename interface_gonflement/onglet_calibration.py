@@ -188,7 +188,7 @@ class OngletCalibration(ttk.Frame):
 
     # ----------------------------------------------------------------- 2
     def dossier(self, f):
-        """Racine / date / nom de l'essai -> <racine>/<date>/<nom>/Mesure (images),
+        """Racine / date / nom de l'essai -> <racine>/<date>/calib/Mesure (images),
         Photos (photos de réglage) et results_calib (calcul)."""
         a = self.app
         a.v("calibration.date").set(time.strftime("%Y_%m_%d"))   # aujourd'hui, comme l'original
@@ -197,7 +197,7 @@ class OngletCalibration(ttk.Frame):
         ligne.grid(row=1, column=0, columnspan=4, sticky="w", padx=4, pady=3)
         ttk.Label(ligne, text="Date (AAAA_MM_JJ)").pack(side="left", padx=(4, 6))
         ttk.Entry(ligne, textvariable=a.v("calibration.date"), width=12).pack(side="left")
-        ttk.Label(ligne, text="Nom de l'essai").pack(side="left", padx=(18, 6))
+        ttk.Label(ligne, text="Dossier de calibration").pack(side="left", padx=(18, 6))
         ttk.Entry(ligne, textvariable=a.v("calibration.nom_essai"), width=22).pack(side="left")
         self.lbl_cible = a.note(f, 2, "", 1100)
         a.chemin_choisi(f, 3, "Images pour le calcul", "calibration.dossier_images",
@@ -265,30 +265,36 @@ class OngletCalibration(ttk.Frame):
     # ----------------------------------------------------------------- 3
     def acquisition(self, f):
         a = self.app
-        a.champ(f, 0, "Exposition gauche", "calibration.expo_gauche", "µs")
-        a.champ(f, 1, "Exposition droite", "calibration.expo_droite", "µs")
-        a.champ(f, 2, "Stabilisation avant photo", "calibration.stabilisation", "s",
-                aide="Temps pendant lequel le plateau doit rester à la bonne hauteur "
-                     "(position lue) avant le déclenchement des caméras")
-        a.case(f, 5, "Afficher le graphe de la hauteur du plateau (Grapher crappy)",
-               "calibration.graphe_hauteur")
-        a.champ(f, 4, "Vitesse du plateau", "calibration.vitesse_plateau", "mm/min")
-        a.note(f, 7, "Plan par plan : le plateau va à la hauteur, la position lue doit être "
-                     "atteinte et stable, puis les deux caméras sont déclenchées ; on attend "
-                     "les deux images avant le plan suivant. La hauteur lue au moment de chaque "
-                     "photo est notée (positions_photos.csv et document des hauteurs).", 620)
+        self.lbl_acq = ttk.Label(f, style="Petit.TLabel", wraplength=620)
+        self.lbl_acq.grid(row=0, column=0, columnspan=4, sticky="w", padx=8, pady=3)
+        for k in ("expo_gauche", "expo_droite", "stabilisation", "vitesse_plateau",
+                  "graphe_hauteur"):
+            a.v(f"calibration.{k}").trace_add("write", lambda *_: self.maj_acq())
+        self.maj_acq()
         self.maj_plans()
         b = ttk.Frame(f)
-        b.grid(row=6, column=0, columnspan=4, sticky="w", padx=4, pady=6)
+        b.grid(row=1, column=0, columnspan=4, sticky="w", padx=4, pady=6)
         ttk.Button(b, text="▶  Lancer l'acquisition", style="Go.TButton",
                    command=self.lancer_acquisition).pack(side="left", padx=3)
         ttk.Button(b, text="Écrire le document des hauteurs", command=self.document
                    ).pack(side="left", padx=3)
         ttk.Button(b, text="Ouvrir le document", command=self.ouvrir_document
                    ).pack(side="left", padx=3)
-        a.note(f, 8, "Le document hauteurs_calibration.txt (et .csv) est écrit "
+        a.note(f, 2, "Le document hauteurs_calibration.txt (et .csv) est écrit "
                      "automatiquement dans le dossier images calib à chaque acquisition : "
                      "hauteur de départ, pas, hauteur de chaque plan et images prises.", 620)
+
+    def maj_acq(self):
+        """Rappel des réglages d'acquisition (modifiables dans l'onglet Matériel)."""
+        v = lambda k: self.app.v(f"calibration.{k}").get()
+        try:
+            graphe = "graphe de la hauteur" if v("graphe_hauteur") else "sans graphe"
+        except Exception:
+            graphe = ""
+        self.lbl_acq.configure(text=(
+            f"Expositions {v('expo_gauche')} / {v('expo_droite')} µs, stabilisation "
+            f"{v('stabilisation')} s, plateau {v('vitesse_plateau')} mm/min, {graphe} "
+            "— réglages dans l'onglet Matériel."))
 
     def lancer_acquisition(self):
         a = self.app
@@ -398,8 +404,8 @@ class OngletCalibration(ttk.Frame):
             if figures:
                 self._montrer_figures(figures, d.parent / "results_calib")
             if code == 0 and attendu is not None and attendu.is_file():
-                a.v("essai.deformation.fichier_constantes").set(str(attendu))
-                a.v("essai.deformation.methode_3d").set(c["methode"])
+                a.v("essai.deformation.fichier_constantes").set(str(attendu.resolve()))
+                a.essai.chercher_calibrations()
                 a.log(f"Calibration retenue pour le pilotage 3D : {attendu}", "info")
         a.lancer(f"Calibration {c['methode']}",
                  [a.python(), "-u", str(a.ICI / "lancer_calibration.py"), "calcul", str(fichier)],

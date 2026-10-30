@@ -33,7 +33,7 @@ DEFAUTS = {
     },
     "essai": {
         "echantillon": "Pro_Grip",
-        "dossier": "",                    # vide = <racine>/<date>/<échantillon>
+        "dossier": "",                    # vide = <racine>/<date> ; puis /essai_<mode>/Mesure
         "mode": "debit",                  # "debit" | "pression" | "deformation"
         "freq_cam": 2.5,                  # Hz, déclenchement FT232R
         "sauver_images": True,
@@ -63,9 +63,10 @@ DEFAUTS = {
             "eps_max": 15.0,              # %
             "vitesse": 0.02,              # %/s
             "duree_palier": 0.0,
-            "kp": 20.0,                   # mL/min par %
-            "ki": 2.0,                    # mL/min par (% . s)
-            "kff": 0.0,                   # mL/min par (%/s), anticipation
+            "debit_tension": 13.2,        # mL/min jusqu'à ce que la membrane se déforme
+            "seuil_tension": 0.15,        # % de déformation qui marque la mise en tension
+            "tau": 8.0,                   # s pour rattraper un écart à la cible
+            "fenetre": 3.0,               # s de mesures pour filtrer ε et estimer dε/dt
             "timeout_mesure": 5.0,        # s sans mesure -> débit coupé
             "methode_3d": "Zernike",      # Zernike | Lagrange
             "pform": 12,                  # lu dans le nom du dossier nZ_<degré>
@@ -77,7 +78,7 @@ DEFAUTS = {
         "z_depart": 70.0,
         "pas_z": 2.0,
         "z_fin": 32.0,                    # dernière hauteur photographiée (incluse)
-        "nom_essai": "Mvt_Rigide",        # <racine>/<date>/<nom>/Mesure, comme calib_crappy_V2
+        "nom_essai": "calib",             # <racine>/<date>/calib/Mesure
         "stabilisation": 1.0,             # s immobile à la bonne hauteur avant la photo
         "vitesse_plateau": 100.0,         # mm/min (G0 F, comme calib_crappy_V2)
         "expo_droite": 41389,
@@ -86,7 +87,7 @@ DEFAUTS = {
         "z_reglage": 70.0,                # hauteur pour "Aller à Z"
         # comme Pycaso/calibration_gui.py
         "date": "",                       # vide = aujourd'hui (AAAA_MM_JJ)
-        "dossier_images": "",             # vide = <racine>/<date>/<nom>/Mesure
+        "dossier_images": "",             # vide = <racine>/<date>/calib/Mesure
         "methode": "Lagrange",
         "pform": "4",
         "iterations": 10,
@@ -110,7 +111,16 @@ def fusion(base, ajout):
 def charger(fichier=FICHIER_REGLAGES):
     try:
         with open(fichier, encoding="utf-8") as f:
-            return fusion(DEFAUTS, json.load(f))
+            r = fusion(DEFAUTS, json.load(f))
+    except (OSError, ValueError):
+        return copy.deepcopy(DEFAUTS)
+    cal = r["calibration"]
+    if cal.get("nom_essai") == "Mvt_Rigide":         # ancienne organisation des dossiers
+        cal["nom_essai"] = "calib"
+        if "/Mvt_Rigide/" in cal.get("dossier_images", "").replace("\\", "/"):
+            cal["dossier_images"] = ""
+    try:
+        return r
     except (OSError, ValueError):
         return copy.deepcopy(DEFAUTS)
 
@@ -163,13 +173,56 @@ def degre_depuis_chemin(fichier, defaut=None):
     return defaut
 
 
+MOTIFS_CALIB = {"Zernike": "nZ_*/A_Zernike.npy", "Lagrange": "Lpform_*/L_constants.npy"}
+
+
+def calibrations_disponibles(*dossiers):
+    """Calibrations utilisables pour la déformation 3D, trouvées sous les dossiers
+    donnés (…/results_calib/nZ_<n>/A_Zernike.npy, …/Lpform_<n>/L_constants.npy).
+    Soloff n'a pas d'identification temps réel : ignoré. Plus récentes d'abord.
+    Renvoie [{chemin, methode, degre, date, libelle}]."""
+    import time
+    vus, res = set(), []
+    for d in dossiers:
+        d = Path(d)
+        if not d.is_dir():
+            continue
+        for methode, motif in MOTIFS_CALIB.items():
+            for f in d.glob(f"**/[Rr]esults_[Cc]alib/{motif}"):
+                f = f.resolve()
+                if f in vus:
+                    continue
+                vus.add(f)
+                essai = f.parent.parent.parent       # <date>/<nom> (ou <date>)
+                try:
+                    nom = str(essai.relative_to(d))
+                except ValueError:
+                    nom = essai.name
+                t = f.stat().st_mtime
+                n = degre_depuis_chemin(f)
+                res.append({"chemin": str(f), "methode": methode, "degre": n, "date": t,
+                            "libelle": f"{methode} {n} — {nom} — "
+                                       f"{time.strftime('%d/%m/%Y %H:%M', time.localtime(t))}"})
+    return sorted(res, key=lambda c: -c["date"])
+
+
+def nom_dossier_essai(ess):
+    """essai_debit, essai_pression, essai_def_Zernike, essai_def_Lagrange, essai_def_2D."""
+    mode = ess["mode"]
+    if mode != "deformation":
+        return f"essai_{mode}"
+    d = ess["deformation"]
+    return "essai_def_" + (d.get("methode_3d") or "Zernike" if d.get("source") == "3D" else "2D")
+
+
 def dossier_base_essai(cfg, date):
-    """Dossier choisi dans l'interface, sinon <racine>/<date>/<échantillon>.
-    Les données vont dans <ce dossier>/Mesure (puis Mesure_00001, ...)."""
+    """<racine>/<date>/essai_<mode>[_<méthode>] ; si un dossier est choisi dans
+    l'interface, il remplace <racine>/<date>. Les données vont dans
+    <ce dossier>/Mesure (puis Mesure_00001, ...)."""
     ess = cfg["essai"]
-    if ess.get("dossier", "").strip():
-        return Path(ess["dossier"].strip())
-    return Path(cfg["materiel"]["dossier_racine"]) / date / ess["echantillon"]
+    choisi = ess.get("dossier", "").strip()
+    base = Path(choisi) if choisi else Path(cfg["materiel"]["dossier_racine"]) / date
+    return base / nom_dossier_essai(ess)
 
 
 def duree_estimee(z_list, z_init=70.0, vitesse=100.0, stabilisation=1.0):

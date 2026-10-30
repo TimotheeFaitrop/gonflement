@@ -17,7 +17,7 @@ Trois modes de pilotage, tous commandent le débit de l'Alicat :
 |---|---|---|---|
 | **Débit** | mL/min, rampe en s, attente, palier | boucle ouverte | débit coupé |
 | **Pression** | valeur + vitesse de montée (/s), palier | PI → débit | maintien en pression |
-| **Déformation** | % visé + vitesse (%/s), palier | PI (+ anticipation) → débit | maintien en déformation |
+| **Déformation** | % visé + vitesse (%/s), palier | en vitesse de déformation : débit = G × dε/dt voulu, G estimé en continu | maintien en déformation |
 
 La déformation est mesurée par **stéréo-corrélation 3D** (par défaut, modèle
 **Zernike** de Pycaso, ou Lagrange), ou en 2D par le VideoExtenso :
@@ -33,14 +33,33 @@ La déformation est mesurée par **stéréo-corrélation 3D** (par défaut, mod�
    `toutes` (moyenne de toutes les paires, adaptée au gonflement équibiaxial).
    Le déplacement hors plan moyen `uz` est aussi enregistré.
 
-Le fichier de constantes est `<date>/results_calib/nZ_<degré>/A_Zernike.npy`
-(degré lu dans le nom du dossier). Il est rempli automatiquement après un calcul
-de calibration Zernike, ou via « Prendre la dernière calibration ». Si la
+**Choix de la calibration** : l'interface cherche les calibrations réellement
+calculées sous le dossier des expériences (et le dossier de calibration en cours) :
+`…/results_calib/nZ_<degré>/A_Zernike.npy` (Zernike) et
+`…/results_calib/Lpform_<degré>/L_constants.npy` (Lagrange). Le menu « Modèle »
+ne propose que les méthodes trouvées, le menu « Calibration » que les calibrations
+de cette méthode (la plus récente d'abord, avec date et essai) ; le degré est lu
+dans le nom du dossier. Soloff n'est pas proposé (pas d'identification en temps
+réel). Recherche refaite à l'ouverture de l'onglet Essai, au changement de dossier,
+après un calcul de calibration, au démarrage et avec « Rechercher les
+calibrations ». Sans calibration calculée, l'essai 3D réel ne démarre pas. Si la
 déformation n'arrive plus (taches perdues), le débit est coupé après le délai
 « Coupure sans mesure ».
 
 Code : `stereo_3d.py` (bloc `StereoDeformation`). `PolyZernike.py` et
 `tridicalddef.py` ne sont plus utilisés.
+
+**Régulation en déformation** (`PilotageDeformation`) : le débit fixe la vitesse
+de déformation (dε/dt ≈ Q / G). 1) Mise en tension : débit constant (« débit de
+mise en tension ») jusqu'à ce que ε augmente du seuil — pas d'accumulation
+pendant le volume mort de la cellule ; 2) la rampe part de la ε atteinte ;
+3) à chaque image, ε est lissée et dε/dt estimée (droite sur la « fenêtre de
+lissage »), la vitesse voulue est vitesse de rampe + (cible − ε)/τ, et le débit
+vaut G × vitesse voulue ; G (mL/min par %/s) est réestimé en continu (volume
+injecté / Δε sur ~0,3 % de déformation). Enregistré : `eps_f`, `vitesse_eps`,
+`gain` dans `data_pilotage_deformation.txt`. Réglages : débit de mise en tension
+proche du débit utile (plus faible = moins de saut au départ), τ plus petit =
+suivi plus serré, fenêtre ≥ 5 images.
 
 **Pendant l'essai** : nouvelle consigne, nouvelle vitesse, pause/reprise,
 « Terminer le profil », courbes et valeurs en direct.
@@ -54,9 +73,20 @@ pression max (coupure définitive), débit max, variation max du débit, durée 
 **ARRÊT D'URGENCE** = débit à 0 et processus tué, puis consigne 0 renvoyée
 directement à l'Alicat.
 
-Données dans `<dossier de l'essai>/Mesure[_0000N]/`. Le dossier de l'essai se choisit
-en parcourant le PC (bouton « … » de l'onglet Essai) ; laissé vide, c'est
-`<racine>/<date>/<échantillon>`. Mêmes fichiers que
+**Organisation des dossiers** (même date pour la calibration et les essais) :
+
+```
+<racine>/2026_10_30/
+  calib/                 calibration : Mesure/ (images), Photos/, results_calib/
+  essai_debit/Mesure/    essai piloté en débit (puis Mesure_00001, …)
+  essai_pression/Mesure/
+  essai_def_Zernike/Mesure/   déformation 3D, modèle Zernike
+  essai_def_Lagrange/Mesure/  déformation 3D, modèle Lagrange
+  essai_def_2D/Mesure/        déformation 2D (VideoExtenso)
+```
+
+Le champ « Dossier (date) » de l'onglet Essai remplace `<racine>/<date>` si on
+le remplit (bouton « … ») ; l'échantillon est noté dans `parametres_essai.json`. Mêmes fichiers que
 `alicat_flow_crappy_V3.py` (`data_ali.txt`, `data_ver.txt`, `data_vel.txt`,
 images `video_extenso_left|right/`) + `data_stereo_3d.txt` (déformations 3D, uz, points 3D) + `data_pilotage_<mode>.txt` (cible,
 consigne, mesure, commande, état) + `parametres_essai.json`.
@@ -65,7 +95,8 @@ consigne, mesure, commande, état) + `parametres_essai.json`.
 
 En haut, toujours visible : **dossier de calibration** (racine choisie en
 parcourant le PC, date, nom de l'essai, images pour le calcul). Tout va dans
-`<racine>/<date>/<nom>/` : `Mesure/` (images), `Photos/`, `results_calib/`.
+`<racine>/<date>/calib/` : `Mesure/` (images), `Photos/`, `results_calib/`
+(nom `calib` modifiable).
 
 Mêmes paramètres et valeurs par défaut que les programmes du dépôt :
 
@@ -74,14 +105,14 @@ Mêmes paramètres et valeurs par défaut que les programmes du dépôt :
    (Z = 70), changer l'origine Z (G92 : la position actuelle prend la valeur
    saisie, jusqu'à la prochaine prise d'origine G28), aperçu des deux caméras,
    **prendre une photo** avec chaque caméra (TIFF pleine résolution dans
-   `<racine>/<date>/<nom>/Photos`, affichées directement), test des caméras, aller à un Z.
+   `<racine>/<date>/calib/Photos`, affichées directement), test des caméras, aller à un Z.
 2. **Essai et plans z** : dossier racine (choisi en parcourant le PC), date
-   (aujourd'hui), nom de l'essai (`Mvt_Rigide` comme `calib_crappy_V2`). Les images
-   vont dans `<racine>/<date>/<nom>/Mesure` (puis `Mesure_00001`… s'il est déjà
+   (aujourd'hui), dossier de calibration (`calib`). Les images
+   vont dans `<racine>/<date>/calib/Mesure` (puis `Mesure_00001`… s'il est déjà
    rempli), avec `video_extenso_left/` et `video_extenso_right/`. Plans donnés par
    **Z départ, Z fin (incluse) et pas** : 70 → 32 par 2 = 20 plans, comme avant.
    « Images pour le calcul » suit ce dossier (modifiable pour un ancien essai) ;
-   résultats dans `<racine>/<date>/<nom>/results_calib`.
+   résultats dans `<racine>/<date>/calib/results_calib`.
 3. **Acquisition en boucle fermée** (`sequence_calibration.py`) : origine (G28)
    puis directement Z départ (plus de passage par Z = 70) ; pour chaque
    plan, le plateau va à la hauteur, la position lue (M114.2) doit être atteinte
@@ -93,7 +124,7 @@ Mêmes paramètres et valeurs par défaut que les programmes du dépôt :
    que le premier trajet depuis Z = 70 peut durer 30 s). Hauteur lue au moment de
    chaque photo dans `positions_photos.csv` et le document des hauteurs.
    Expositions 28757 µs (gauche) et 41389 µs (droite), **graphe de la hauteur du plateau**
-   (Grapher crappy, option). La mémoire USB des caméras est vérifiée avant le
+   (Grapher crappy, option) — réglages dans l'onglet Matériel. La mémoire USB des caméras est vérifiée avant le
    lancement (mot de passe sudo demandé si besoin, sans quoi les caméras ne
    renvoient aucune image) et le nombre d'images enregistrées est affiché à la
    fin. Document `hauteurs_calibration.txt` (et `.csv`) écrit à chaque
@@ -125,7 +156,16 @@ pkill. Si une caméra reste bloquée malgré tout : la débrancher et la rebranc
 
 ## Onglet Matériel
 
-Ports, numéros de série, expositions, URL du FT232R, dossier racine, ports UDP.
+Ports, numéros de série, expositions, URL du FT232R, dossier racine, ports UDP,
+et les réglages d'**acquisition des images** : pour l'essai (fréquence des images,
+enregistrement des images, fenêtres Grapher crappy) et pour la calibration
+(expositions, stabilisation avant photo, vitesse du plateau, graphe de la hauteur).
+Les boutons de lancement restent dans les onglets Essai et Calibration (la section 3
+de Calibration rappelle les réglages utilisés).
+
+**Chemins accentués sous Windows** (`compat_cv2.py`) : OpenCV ne lit/écrit pas
+les chemins non ASCII (« Données ») ; les lectures/écritures passent par numpy
+(`np.fromfile` + `cv2.imdecode`), y compris dans Pycaso.
 Les programmes sont lancés avec le Python qui a ouvert l'interface.
 Outils : détection des ports, libération de la mémoire USB des caméras (sudo),
 débit à 0. **Mode simulation** : ballon simulé vu par deux caméras virtuelles avec un étalonnage Zernike synthétique (toute la chaîne 3D tourne), aucun matériel — pour prendre
@@ -136,8 +176,9 @@ l'interface en main et dégrossir les gains.
 - **Pleine échelle** : la commande envoyée est `débit / pleine_échelle`, comme
   dans `alicat_flow_crappy_V3.py` (13.2/1000). Vérifier que l'Alicat affiche bien
   le débit demandé.
-- **Gains PI** (pression, déformation) : réglés sur le ballon simulé seulement.
-  Commencer avec une vitesse lente et un Ki faible.
+- **Gains PI** (pression) : réglés sur le ballon simulé seulement. Commencer avec
+  une vitesse lente et un Ki faible. En déformation, régler d'abord le débit de
+  mise en tension, puis τ.
 - **Unité de pression** : celle configurée sur le débitmètre (absolue par défaut).
 - **Stéréo 3D** : au démarrage, la console affiche l'appariement gauche→droite et
   les points 3D initiaux (dispersion en z attendue faible, l'échantillon est plat).
@@ -163,7 +204,8 @@ interface_gonflement/
   lancer_calibration.py  acquisition + calcul de calibration
   sequence_calibration.py acquisition plan par plan en boucle fermée (plateau, FT232R, caméras)
   outils_machine.py      origine, aller à Z, aperçu, test caméras, débit à 0, ports
-  reglages.py            valeurs par défaut, reglages_utilisateur.json
+  reglages.py            valeurs par défaut, reglages_utilisateur.json, recherche des calibrations
+  compat_cv2.py          lecture/écriture OpenCV avec chemins accentués (Windows)
 ```
 
 Thème : onglet Matériel → « Thème » (sombre ou clair), appliqué immédiatement.

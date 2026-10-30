@@ -23,6 +23,9 @@ sys.path.insert(0, str(ICI.parent))
 sys.path.insert(0, str(ICI))
 
 from reglages import dossier_unique, zl  # noqa: E402
+import compat_cv2  # noqa: E402
+
+compat_cv2.installer()     # chemins accentués (« Données ») sous Windows, y compris dans Pycaso
 
 # crappy ne garde qu'une référence faible vers les blocs
 _BLOCS = []
@@ -114,8 +117,7 @@ def acquisition(cfg):
     z = zl(cal)
     t_plan = temps_par_plan(cal)
 
-    # <racine>/<date>/<nom de l'essai>/Mesure, comme ./<date>/Mvt_Rigide/Mesure de
-    # calib_crappy_V2, puis Mesure_00001... s'il est déjà rempli (get_unique_save_path)
+    # <racine>/<date>/calib/Mesure (puis Mesure_00001…)
     dossier = dossier_unique(Path(mat["dossier_racine"]) / cal["date"] / cal["nom_essai"] / "Mesure")
     print(f"DOSSIER_CALIB={dossier.resolve()}", flush=True)
     ecrire_document(dossier, cfg, "acquisition en cours")

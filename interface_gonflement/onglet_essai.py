@@ -16,7 +16,8 @@ except ImportError:
     from courbes import Courbes
     from widgets import Bulle, CadreDefilant
 
-ETATS = {0: "attente", 1: "rampe", 2: "palier", 3: "fin du profil", 4: "pause", 5: "SÉCURITÉ"}
+ETATS = {0: "attente", 1: "rampe", 2: "palier", 3: "fin du profil", 4: "pause", 5: "SÉCURITÉ",
+         6: "mise en tension"}
 UNITES = {"debit": ("mL/min", "mL/min/s"), "pression": ("(unité P)", "(unité P)/s"),
           "deformation": ("%", "%/s")}
 TITRES = {"debit": "Consigne de débit", "pression": "Consigne de pression",
@@ -42,15 +43,17 @@ class OngletEssai(ttk.Frame):
         self.courbes.pack(fill="both", expand=True, pady=(6, 4))
         self.maj_mode()
         self.maj_source()
+        self.chercher_calibrations()
 
     # ================================================================ paramètres
     def colonne_parametres(self, g):
         a = self.app
         f = a.cadre(g, "Échantillon et mode de pilotage")
         a.champ(f, 0, "Échantillon", "essai.echantillon", largeur=24)
-        a.chemin_choisi(f, 1, "Dossier de l'essai", "essai.dossier", dossier=True, largeur=22)
+        a.chemin_choisi(f, 1, "Dossier (date)", "essai.dossier", dossier=True, largeur=22)
         self.lbl_prevu = a.note(f, 2, "")
-        for cle in ("essai.echantillon", "essai.dossier", "materiel.dossier_racine"):
+        for cle in ("essai.dossier", "materiel.dossier_racine", "essai.mode",
+                    "essai.deformation.source", "essai.deformation.methode_3d"):
             a.v(cle).trace_add("write", lambda *_: self.maj_prevu())
         self.maj_prevu()
         modes = ttk.Frame(f)
@@ -89,26 +92,40 @@ class OngletEssai(ttk.Frame):
         a.champ(c, 3, "Déformation visée", "essai.deformation.eps_max", "%")
         a.champ(c, 4, "Vitesse de déformation", "essai.deformation.vitesse", "%/s")
         a.champ(c, 5, "Durée du palier", "essai.deformation.duree_palier", "s (0 = illimité)")
-        self._pi(c, 6, "deformation", "%")
-        a.champ(c, 10, "Anticipation Kff", "essai.deformation.kff", "mL/min par %/s",
-                aide="Débit ajouté proportionnel à la vitesse de rampe (0 = désactivé)")
-        a.champ(c, 11, "Coupure sans mesure", "essai.deformation.timeout_mesure", "s",
+        ttk.Separator(c).grid(row=6, column=0, columnspan=3, sticky="ew", pady=4)
+        a.note(c, 7, "Régulation en vitesse de déformation (débit ∝ dε/dt)")
+        a.champ(c, 8, "Débit de mise en tension", "essai.deformation.debit_tension", "mL/min",
+                aide="Débit constant au départ, jusqu'à ce que la membrane commence à se "
+                     "déformer (volume mort de la cellule) ; la rampe part ensuite de là")
+        a.champ(c, 9, "Seuil de mise en tension", "essai.deformation.seuil_tension", "%",
+                aide="Augmentation de ε qui marque le début de la déformation")
+        a.champ(c, 10, "Temps de rattrapage τ", "essai.deformation.tau", "s",
+                aide="Un écart à la cible est corrigé en ~τ s. Plus petit = suivi plus serré "
+                     "mais plus nerveux ; plus grand = plus doux")
+        a.champ(c, 11, "Fenêtre de lissage", "essai.deformation.fenetre", "s",
+                aide="Durée de mesures utilisée pour filtrer ε et estimer dε/dt "
+                     "(au moins 5 images conseillé)")
+        a.champ(c, 12, "Coupure sans mesure", "essai.deformation.timeout_mesure", "s",
                 aide="Débit coupé si plus aucune déformation n'arrive (taches perdues)")
         self.cadre_3d = ttk.LabelFrame(c, text="Stéréo-corrélation 3D (Pycaso)", padding=4)
-        self.cadre_3d.grid(row=12, column=0, columnspan=3, sticky="ew", padx=4, pady=6)
+        self.cadre_3d.grid(row=13, column=0, columnspan=3, sticky="ew", padx=4, pady=6)
         d = self.cadre_3d
-        a.choix(d, 0, "Modèle", "essai.deformation.methode_3d", ["Zernike", "Lagrange"])
-        a.chemin_choisi(d, 1, "Constantes", "essai.deformation.fichier_constantes", largeur=22)
-        a.champ(d, 2, "Degré", "essai.deformation.pform",
-                aide="Lu dans le nom du dossier (nZ_12 -> 12)")
+        self.choix_modele = a.choix(d, 0, "Modèle", "essai.deformation.methode_3d", [],
+                                    commande=self.maj_liste_calib)
+        ttk.Label(d, text="Calibration").grid(row=1, column=0, sticky="w", padx=8, pady=3)
+        self.choix_calib = ttk.Combobox(d, state="readonly", width=34)
+        self.choix_calib.grid(row=1, column=1, columnspan=2, sticky="w", padx=4, pady=3)
+        self.choix_calib.bind("<<ComboboxSelected>>", lambda e: self.choisir_calib())
+        self.lbl_calib = a.note(d, 2, "")
         a.case(d, 3, "Caméra droite en miroir (tournée de 180°)",
                "essai.deformation.rotation_droite")
-        ttk.Button(d, text="Prendre la dernière calibration",
-                   command=self.derniere_calibration).grid(row=4, column=0, columnspan=3,
-                                                           sticky="w", padx=8, pady=4)
-        a.v("essai.deformation.fichier_constantes").trace_add("write", lambda *_: self.degre_auto())
-        self.lbl_source = a.note(c, 13, "")
-        a.note(c, 14, "Pause = maintien de la déformation atteinte.")
+        ttk.Button(d, text="↻  Rechercher les calibrations",
+                   command=lambda: self.chercher_calibrations(False)).grid(row=4, column=0, columnspan=3,
+                                                            sticky="w", padx=8, pady=4)
+        self.calibs = []
+        a.v("materiel.dossier_racine").trace_add("write", lambda *_: self.chercher_calibrations())
+        self.lbl_source = a.note(c, 14, "")
+        a.note(c, 15, "Pause = maintien de la déformation atteinte.")
 
         f = a.cadre(g, "Sécurité")
         a.champ(f, 0, "Pression maximale", "essai.pression_max", "(unité P)",
@@ -117,12 +134,6 @@ class OngletEssai(ttk.Frame):
         a.champ(f, 2, "Variation max du débit", "essai.vitesse_cmd_max", "mL/min/s")
         a.champ(f, 3, "Durée maximale", "essai.duree_max", "s")
         a.case(f, 4, "Arrêter l'essai à la fin du profil", "essai.arret_auto")
-
-        f = a.cadre(g, "Acquisition")
-        a.champ(f, 0, "Fréquence des images", "essai.freq_cam", "Hz",
-                aide="Déclenchement des deux caméras par le FT232R")
-        a.case(f, 1, "Enregistrer les images", "essai.sauver_images")
-        a.case(f, 2, "Ouvrir aussi les fenêtres Grapher de crappy", "essai.graphers_crappy")
 
         f = ttk.Frame(g)
         f.pack(fill="x", padx=8, pady=10)
@@ -236,31 +247,74 @@ class OngletEssai(ttk.Frame):
         a = self.app
         choisi = a.v("essai.dossier").get().strip()
         base = a.chemin(choisi) if choisi else (
-            a.chemin(a.v("materiel.dossier_racine").get()) / time.strftime("%Y_%m_%d")
-            / a.v("essai.echantillon").get())
-        aide = "" if choisi else "  (dossier vide : racine/date/échantillon)"
-        self.lbl_prevu.configure(text=f"Données dans : {base}/Mesure…{aide}")
-
-    def degre_auto(self):
-        fichier = self.app.v("essai.deformation.fichier_constantes").get()
-        n = rg.degre_depuis_chemin(fichier)
-        if n is not None:
-            self.app.v("essai.deformation.pform").set(str(n))
-            self.app.v("essai.deformation.methode_3d").set(
-                "Lagrange" if Path(fichier).name.startswith("L_") else "Zernike")
-
-    def derniere_calibration(self):
-        """Fichier de constantes le plus récent sous le dossier racine."""
-        m = self.app.v("essai.deformation.methode_3d").get()
-        motif = "nZ_*/A_Zernike.npy" if m == "Zernike" else "Lpform_*/L_constants.npy"
-        racine = self.app.chemin(self.app.v("materiel.dossier_racine").get())
-        trouves = sorted(racine.glob(f"**/[Rr]esults_[Cc]alib/{motif}"),
-                         key=lambda p: p.stat().st_mtime) if racine.is_dir() else []
-        if not trouves:
-            messagebox.showinfo("Calibration", f"Aucun {motif} dans {racine}/<date>/results_calib/")
+            a.chemin(a.v("materiel.dossier_racine").get()) / time.strftime("%Y_%m_%d"))
+        try:
+            nom = rg.nom_dossier_essai({
+                "mode": a.v("essai.mode").get(),
+                "deformation": {"source": a.v("essai.deformation.source").get(),
+                                "methode_3d": a.v("essai.deformation.methode_3d").get()}})
+        except Exception:
             return
-        self.app.v("essai.deformation.fichier_constantes").set(str(trouves[-1]))
-        self.app.log(f"Calibration 3D : {trouves[-1]}", "info")
+        aide = "" if choisi else "  (dossier vide : racine/date)"
+        self.lbl_prevu.configure(text=f"Données dans : {base}/{nom}/Mesure…{aide}")
+
+    # ------------------------------------------------ calibrations 3D faites
+    def chercher_calibrations(self, silencieux=True):
+        """Ne propose que les calibrations réellement calculées (Zernike, Lagrange)
+        sous le dossier racine et le dossier de calibration de l'onglet Calibration."""
+        a = self.app
+        dossiers = [a.chemin(a.v("materiel.dossier_racine").get())]
+        img = a.v("calibration.dossier_images").get().strip()
+        if img:
+            dossiers.append(a.chemin(img).parent)
+        try:
+            self.calibs = rg.calibrations_disponibles(*dossiers)
+        except OSError:
+            self.calibs = []
+        methodes = [m for m in rg.MOTIFS_CALIB if any(c["methode"] == m for c in self.calibs)]
+        self.choix_modele.configure(values=methodes)
+        v = a.v("essai.deformation.methode_3d")
+        actuel = a.v("essai.deformation.fichier_constantes").get()
+        garde = next((c for c in self.calibs if actuel and c["chemin"] == str(Path(actuel).resolve())), None)
+        if garde:
+            v.set(garde["methode"])
+        elif methodes and v.get() not in methodes:
+            v.set(methodes[0])
+        self.maj_liste_calib(garde)
+        if not silencieux:
+            a.log(f"{len(self.calibs)} calibration(s) 3D trouvée(s) "
+                  f"({', '.join(methodes) or 'aucune'})", "info")
+
+    def maj_liste_calib(self, garde=None):
+        a = self.app
+        m = a.v("essai.deformation.methode_3d").get()
+        liste = [c for c in self.calibs if c["methode"] == m]
+        self.choix_calib.configure(values=[c["libelle"] for c in liste])
+        choisie = garde if garde in liste else (liste[0] if liste else None)
+        if choisie:
+            self.choix_calib.set(choisie["libelle"])
+            self._appliquer(choisie)
+        else:
+            self.choix_calib.set("")
+            a.v("essai.deformation.fichier_constantes").set("")
+            racine = a.chemin(a.v("materiel.dossier_racine").get())
+            self.lbl_calib.configure(text=(
+                f"Aucune calibration Zernike ou Lagrange calculée dans {racine}. "
+                "Faire le calcul dans l'onglet Calibration (section 4), ou changer le "
+                "dossier des expériences (Matériel)."))
+
+    def choisir_calib(self):
+        libelle = self.choix_calib.get()
+        c = next((c for c in self.calibs if c["libelle"] == libelle), None)
+        if c:
+            self._appliquer(c)
+
+    def _appliquer(self, c):
+        a = self.app
+        a.v("essai.deformation.fichier_constantes").set(c["chemin"])
+        if c["degre"] is not None:
+            a.v("essai.deformation.pform").set(str(c["degre"]))
+        self.lbl_calib.configure(text=f"{c['chemin']}  (degré {c['degre']})")
 
     def etat_boutons(self):
         if self.en_cours and not (self.app.proc and self.app.proc.vivant()):
@@ -283,7 +337,11 @@ class OngletEssai(ttk.Frame):
         except ValueError as e:
             messagebox.showerror("Réglage invalide", str(e))
             return
-        erreurs = verifier(cfg)
+        if cfg["essai"]["mode"] == "deformation":
+            self.chercher_calibrations()
+            cfg["essai"]["deformation"]["fichier_constantes"] = \
+                a.v("essai.deformation.fichier_constantes").get()
+        erreurs = verifier(cfg, self.calibs)
         if erreurs:
             messagebox.showerror("Paramètres à corriger", "\n".join(erreurs))
             return
@@ -358,7 +416,7 @@ class OngletEssai(ttk.Frame):
         self.etat_boutons()
 
 
-def verifier(cfg):
+def verifier(cfg, calibs=()):
     e, ess = [], cfg["essai"]
     d = ess["deformation"]
     if not ess["echantillon"]:
@@ -375,10 +433,10 @@ def verifier(cfg):
         if d["vitesse"] <= 0:
             e.append("Vitesse de déformation doit être > 0")
         if d["source"] == "3D" and not cfg["materiel"]["simulation"] \
-                and not Path(d["fichier_constantes"]).is_file():
-            e.append("Constantes de calibration 3D introuvables : "
-                     f"{d['fichier_constantes'] or '(vide)'}\n"
-                     "(results_calib/nZ_<degré>/A_Zernike.npy)")
+                and not any(c["chemin"] == d["fichier_constantes"] for c in calibs):
+            e.append("Aucune calibration 3D calculée n'est choisie : faire le calcul "
+                     "Zernike ou Lagrange (onglet Calibration, section 4) puis la choisir "
+                     "dans « Stéréo-corrélation 3D ».")
     return e
 
 

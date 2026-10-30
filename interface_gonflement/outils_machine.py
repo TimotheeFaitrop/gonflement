@@ -76,6 +76,8 @@ def photo(sn_g, sn_d, expo_g, expo_d, dossier):
     L'interface les affiche directement (pas de fichier d'aperçu)."""
     import cv2
     from pathlib import Path
+    import compat_cv2
+    compat_cv2.installer()
     dossier = Path(dossier)
     dossier.mkdir(parents=True, exist_ok=True)
     heure = time.strftime("%H%M%S")

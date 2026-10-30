@@ -24,10 +24,13 @@ class AlicatSimule(crappy.inout.InOut):
     volume = intégrale du débit (moins une petite fuite), pression et
     déformation fonctions croissantes du volume, avec un peu de bruit."""
 
-    def __init__(self, pleine_echelle=1000.0, pression_relative=False, **_):
+    def __init__(self, pleine_echelle=1000.0, pression_relative=False, volume_mort=4.0, **_):
         super().__init__()
         self.fs = pleine_echelle
         self.p_atm = 0.0 if pression_relative else 1013.0
+        # volume à injecter avant que la membrane ne commence à se déformer
+        # (remplissage de la cellule, mise en tension) : la pression monte, pas ε
+        self.volume_mort = float(volume_mort)
 
     def open(self):
         self.t = time.time()
@@ -46,7 +49,8 @@ class AlicatSimule(crappy.inout.InOut):
 
     def get_data(self):
         p_rel = self._etat()
-        eps = 100 * (math.sqrt(1 + self.volume / 40) - 1)
+        utile = max(0.0, self.volume - self.volume_mort)
+        eps = 100 * (math.sqrt(1 + utile / 40) - 1)
         b = random.gauss
         return [time.time(), self.p_atm + p_rel + b(0, 0.5), self.q + b(0, 0.05),
                 self.q * 1.2e-3, eps * 1.05 + b(0, 0.03), eps * 0.95 + b(0, 0.03)]
@@ -147,7 +151,7 @@ class CamerasSimulees(crappy.blocks.Block):
         t = time.time() - self.t0
         out = {}
         for cam, s in ((0, "l"), (1, "r")):
-            uv = self.banc.projeter(P, cam) + self.rng.normal(0, 0.05, (len(P), 2))
+            uv = self.banc.projeter(P, cam) + self.rng.normal(0, 0.3, (len(P), 2))
             if cam == 1:
                 uv = uv[self.ordre_droite]
             x, y = uv[:, 0], uv[:, 1]
