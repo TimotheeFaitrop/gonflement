@@ -237,16 +237,16 @@ def ask_parameters():
             messagebox.showerror("Erreur", f"Champ numérique invalide :\n{err}", parent=root)
             return
         path = v["path_images"].get().strip()
-        if not Path(path).is_dir():
-            if not messagebox.askyesno("Dossier introuvable", f"{path} n'existe pas.\nContinuer quand même ?",
-                                       parent=root):
-                return
-        nb = [n for n in _nb_images(path) if n is not None]
-        if nb and any(n != len(z_list) for n in nb):
-            if not messagebox.askyesno("Nombre de plans", f"{len(z_list)} plans pour "
-                                       f"{' / '.join(map(str, nb))} photos (gauche / droite).\nContinuer quand même ?",
-                                       parent=root):
-                return
+        # fichiers nécessaires : vérifiés ici, avant de fermer la fenêtre (pas après le lancement)
+        erreurs, avertissements = Calibration(path or ".", z_list).verifier(v["method"].get(), pform)
+        if not path:
+            erreurs.insert(0, "Dossier des images : à renseigner")
+        if erreurs:
+            messagebox.showerror("Lancement impossible", "\n".join(erreurs), parent=root)
+            return
+        if avertissements and not messagebox.askyesno(
+                "Vérifier avant de lancer", "\n".join(avertissements) + "\n\nContinuer quand même ?", parent=root):
+            return
         lu = etat["lu"]
         result.update(path_images=path, method=v["method"].get(), pform=pform, iterations=iterations,
                       z_list=z_list, move_metadata=v["move_metadata"].get(), show_plot=v["show_plot"].get(),

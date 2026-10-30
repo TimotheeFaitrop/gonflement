@@ -180,6 +180,40 @@ class DetectionSpots:
                 return c
         return None
 
+    # ----- vérification avant le lancement -----
+
+    @staticmethod
+    def images_camera(dossier_cam):
+        """Images d'une caméra (fichiers dont le nom commence par un chiffre), triées par numéro."""
+        return sorted((f for f in glob.glob(os.path.join(dossier_cam, "[0-9]*")) if os.path.isfile(f)),
+                      key=SuiviTaches.numero_image)
+
+    def verifier(self):
+        """Fichiers nécessaires au lancement : liste des problèmes bloquants (vide si tout est là).
+
+        Appelée par l'interface avant de fermer la fenêtre, et au début de lancer() : un fichier
+        manquant est signalé avant le suivi (long), pas au milieu.
+        """
+        erreurs = []
+        if not os.path.isdir(self.dossier_mesure):
+            return [f"Dossier de l'essai introuvable : {self.dossier_mesure}"]
+        for cote, reprise in (("left", self.gauche_calculated), ("right", self.droite_calculated)):
+            dossier_cam = f"{self.dossier_images}video_extenso_{cote}/"
+            if reprise:
+                manquants = [os.path.basename(f) for f in self.fichiers_reprise(cote) if not os.path.isfile(f)]
+                if manquants:
+                    erreurs.append(f"Reprise caméra {cote} : {', '.join(manquants)} absent(s) de {self.dossier} "
+                                   "(décocher la reprise)")
+            if not os.path.isdir(dossier_cam):
+                erreurs.append(f"Dossier introuvable : {dossier_cam}")
+                continue
+            if not self.images_camera(dossier_cam):
+                erreurs.append(f"Aucune image (nom commençant par un chiffre) dans {dossier_cam}")
+            masque = "maskL.tiff" if cote == "left" else "maskR.tiff"
+            if not reprise and not os.path.isfile(dossier_cam + masque):
+                erreurs.append(f"Masque absent : {dossier_cam + masque}")
+        return erreurs
+
     # ----- point d'entrée -----
 
     def lancer(self):
@@ -189,6 +223,9 @@ class DetectionSpots:
         utiliser_etalonnage est vrai mais qu'aucun étalonnage n'est trouvé, on prévient
         et on apparie sans étalonnage. Renvoie Lp.
         """
+        erreurs = self.verifier()
+        if erreurs:
+            raise FileNotFoundError("Lancement impossible :\n  " + "\n  ".join(erreurs))
         self.paires, self.Lp = None, None
         os.makedirs(self.dossier, exist_ok=True)
         print(f"Résultats enregistrés dans : {self.dossier}")
@@ -250,8 +287,7 @@ class DetectionSpots:
     def numeros_images(self, cote, nb):
         """Numéros (début du nom de fichier) des nb premières images suivies de la caméra cote."""
         dossier_cam = f"{self.dossier_images}video_extenso_{cote}/"
-        images = sorted(glob.glob(os.path.join(dossier_cam, "[0-9]*")), key=SuiviTaches.numero_image)
-        return [SuiviTaches.numero_image(f) for f in images[:nb]]
+        return [SuiviTaches.numero_image(f) for f in self.images_camera(dossier_cam)[:nb]]
 
     def aligner_images(self):
         """Garde, pour les deux caméras, les mêmes images (même numéro), dans le même ordre.
@@ -292,7 +328,7 @@ class DetectionSpots:
 
     def apparier(self, appariement):
         """Apparie les taches de la première image. Renvoie la liste des paires (gauche, droite)."""
-        image_droite = sorted(glob.glob(f"{self.dossier_images}video_extenso_right/[0-9]*"))[0]
+        image_droite = self.images_camera(f"{self.dossier_images}video_extenso_right/")[0]
         h, w = plt.imread(image_droite).shape[:2]
         self.all_pxr_corr, self.all_pyr_corr = AppariementStereo.rotation_180(self.all_pxr, self.all_pyr, h, w)
 

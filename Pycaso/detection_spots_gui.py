@@ -435,8 +435,10 @@ class DetectionSpotsGUI:
                 erreurs.append("Les valeurs de suivi doivent être positives")
             if calib and (params["rayon_recherche"] <= 0 or params["tolerance_plan"] <= 0):
                 erreurs.append("Le rayon et la tolérance doivent être positifs")
+        if not erreurs:                      # fichiers nécessaires : vérifiés avant de fermer la fenêtre
+            erreurs = DetectionSpots(**params).verifier()
         if erreurs:
-            messagebox.showerror("Paramètres invalides", "\n".join(erreurs), parent=self.root)
+            messagebox.showerror("Lancement impossible", "\n".join(erreurs), parent=self.root)
             return
 
         # étalonnage demandé mais absent : pas bloquant, lancer() apparie par recalage 2D

@@ -144,6 +144,40 @@ class Calibration:
             fh.write(f"Calcul {time.strftime('%Y-%m-%d %H:%M')} : {method}, degré {pform}, "
                      f"{iterations} itérations -> {self.results_dir}\n")
 
+    def verifier(self, method=None, pform=None):
+        """Problèmes bloquants avant la calibration : (erreurs, avertissements), listes de textes.
+
+        Erreurs : dossier ou sous-dossier caméra absent, aucune image, méthode ou degré invalide,
+        liste de plans vide. Avertissement : nombre de photos différent du nombre de plans.
+        Appelée par l'interface avant de fermer la fenêtre, et au début de run().
+        """
+        erreurs, avertissements = [], []
+        if method is not None and method not in self.METHODS:
+            erreurs.append(f"Méthode inconnue : {method}")
+        if method == "Soloff" and pform is not None and str(pform) not in \
+                ("111", "221", "222", "332", "333", "443", "444", "554", "555"):
+            erreurs.append(f"Forme Soloff invalide : {pform}")
+        elif pform is not None and int(pform) < 1:
+            erreurs.append(f"Degré invalide : {pform}")
+        if len(self.z_list) < 2:
+            erreurs.append("Il faut au moins deux plans z")
+        if not self.path_images.is_dir():
+            erreurs.append(f"Dossier des images introuvable : {self.path_images}")
+            return erreurs, avertissements
+        nb = []
+        for sous in (self.left_subfolder, self.right_subfolder):
+            d = self.path_images / sous
+            if not d.is_dir():
+                erreurs.append(f"Sous-dossier introuvable : {d}")
+                continue
+            n = len([f for f in d.glob("[0-9]*") if f.is_file()])
+            if n == 0:
+                erreurs.append(f"Aucune image (nom commençant par un chiffre) dans {d}")
+            nb.append(n)
+        if nb and any(n != len(self.z_list) for n in nb if n):
+            avertissements.append(f"{len(self.z_list)} plans pour {' / '.join(map(str, nb))} photos (gauche / droite)")
+        return erreurs, avertissements
+
     # ----- préparation des données -----
 
     def move_metadata(self):
@@ -167,8 +201,9 @@ class Calibration:
 
     def run(self, method, pform, iterations):
         """Lance la méthode choisie ('Lagrange', 'Soloff' ou 'Zernike')."""
-        if method not in self.METHODS:
-            raise ValueError(f"Méthode inconnue : {method}")
+        erreurs, _ = self.verifier(method, pform)
+        if erreurs:
+            raise FileNotFoundError("Calibration impossible :\n  " + "\n  ".join(erreurs))
         print(f"\n{self.date}\n#####\n{method} - début de la calibration\n#####")
         res = {"Lagrange": self.lagrange, "Soloff": self.soloff, "Zernike": self.zernike}[method](pform, iterations)
         self.noter_calcul(method, pform, iterations)
