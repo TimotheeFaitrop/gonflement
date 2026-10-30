@@ -57,7 +57,7 @@ class Detect3D:
                  # --- Étalonnage ---
                  methode="Lagrange",        # "Lagrange", "Soloff" ou "Zernike"
                  degre=None,                # degré du polynôme ; None = valeur par défaut de la méthode
-                 facteur_z=10.0,            # Z reconstruit × facteur (Z sorti 10× trop petit) ; 1 = brut
+                 facteur_z=1.0,            # Z reconstruit × facteur (Z sorti 10× trop petit) ; 1 = brut
                  etat_plat=True,           # True : lit Lp_final_corrige.npy (image 0 = état plat, voir
                                             # correction_class) et écrit dans reconstruction/<tag>_corrige
                  # --- Figures ---
