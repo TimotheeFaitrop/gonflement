@@ -70,8 +70,6 @@ class Application(Formulaire, tk.Tk):
         self.onglets.add(self.essai, text="Essai")
         self.materiel = OngletMateriel(self.onglets, self)
         self.onglets.add(self.materiel, text="Matériel")
-        self.onglets.bind("<<NotebookTabChanged>>", lambda e: (
-            self.onglets.select() == str(self.essai) and self.essai.chercher_calibrations()))
         self.maj_bandeau()
         self.protocol("WM_DELETE_WINDOW", self.quitter)
         self.after(800, self._restes_au_demarrage)
@@ -85,7 +83,7 @@ class Application(Formulaire, tk.Tk):
         ttk.Label(barre, text="Console", style="Titre.TLabel").pack(side="left", padx=8)
         self.lbl_proc = ttk.Label(barre, text="Aucune tâche en cours", style="Petit.TLabel")
         self.lbl_proc.pack(side="left", padx=12)
-        ttk.Button(barre, text="Effacer", command=lambda: self.console.delete("1.0", "end")
+        ttk.Button(barre, text="Effacer", command=lambda: self.console.delete("0", "end")
                    ).pack(side="right", padx=4)
         self.btn_interrompre = ttk.Button(barre, text="Interrompre la tâche",
                                           command=self.arreter, state="disabled")

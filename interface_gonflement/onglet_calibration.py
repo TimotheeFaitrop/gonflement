@@ -41,12 +41,90 @@ class OngletCalibration(ttk.Frame):
         col = CadreDefilant(self, largeur=680, fond=a.P["fond"])
         col.pack(side="left", fill="both", expand=True)
         g = col.interieur
-        self.reglage(a.cadre(g, "1. Réglage du plateau et des caméras"))
-        self.plans(a.cadre(g, "2. Plans z (mm)"))
+        self.plans(a.cadre(g, "1. Plans z (mm)"))
+        self.reglage(a.cadre(g, "2. Réglage du plateau et des caméras"))
         self.acquisition(a.cadre(g, "3. Acquisition des images (plan par plan)"))
         self.methode(a.cadre(g, "4. Méthode et calcul (Pycaso)"))
 
     # ----------------------------------------------------------------- 1
+    
+    def dossier(self, f):
+        """Racine / date / nom de l'essai -> <racine>/<date>/<nom>/Mesure (images),
+        Photos (photos de réglage) et results_calib (calcul)."""
+        a = self.app
+        a.v("calibration.date").set(time.strftime("%Y_%m_%d"))   # aujourd'hui, comme l'original
+        a.chemin_choisi(f, 0, "Dossier racine", "materiel.dossier_racine", dossier=True, largeur=60)
+        ligne = ttk.Frame(f)
+        ligne.grid(row=1, column=0, columnspan=4, sticky="w", padx=4, pady=3)
+        ttk.Label(ligne, text="Date (AAAA_MM_JJ)").pack(side="left", padx=(4, 6))
+        ttk.Entry(ligne, textvariable=a.v("calibration.date"), width=12).pack(side="left")
+        ttk.Label(ligne, text="Nom de l'essai").pack(side="left", padx=(18, 6))
+        ttk.Entry(ligne, textvariable=a.v("calibration.nom_essai"), width=22).pack(side="left")
+        self.lbl_cible = a.note(f, 2, "", 1100)
+        a.chemin_choisi(f, 3, "Images pour le calcul", "calibration.dossier_images",
+                        dossier=True, largeur=60)
+        self.lbl_resultats = a.note(f, 4, "", 1100)
+        # le dossier du calcul suit racine / date / nom tant qu'il n'a pas été modifié à la main
+        self.auto = self._chemin_auto()
+        memo = a.v("calibration.dossier_images").get().strip()
+        if not memo or a.v("calibration.date").get() not in memo:
+            a.v("calibration.dossier_images").set(self.auto)
+        for cle in ("calibration.date", "materiel.dossier_racine", "calibration.nom_essai"):
+            a.v(cle).trace_add("write", lambda *_: self._suivre_date())
+        a.v("calibration.dossier_images").trace_add("write", lambda *_: self._maj_resultats())
+        self._maj_resultats()
+    
+    def plans(self, f):
+        a = self.app
+        ligne = ttk.Frame(f)
+        ligne.grid(row=0, column=0, columnspan=4, sticky="w", padx=4, pady=4)
+        for txt, cle in (("Z départ", "z_depart"), ("Z fin", "z_fin"), ("pas", "pas_z")):
+            ttk.Label(ligne, text=txt).pack(side="left", padx=(8, 4))
+            ttk.Entry(ligne, textvariable=a.v(f"calibration.{cle}"), width=7).pack(side="left")
+        ttk.Label(ligne, text="mm", style="Petit.TLabel").pack(side="left", padx=4)
+        self.lbl_plans = a.note(f, 1, "", 620)
+        for k in ("z_depart", "z_fin", "pas_z", "stabilisation", "vitesse_plateau"):
+            a.v(f"calibration.{k}").trace_add("write", lambda *_: self.maj_plans())
+    
+    def _chemin_auto(self):
+        a = self.app
+        racine = a.v("materiel.dossier_racine").get().rstrip("/")
+        return f"{racine}/{a.v('calibration.date').get()}/{a.v('calibration.nom_essai').get()}/Mesure"
+    
+    def _suivre_date(self):
+        v = self.app.v("calibration.dossier_images")
+        if v.get() == self.auto:
+            self.auto = self._chemin_auto()
+            v.set(self.auto)
+        else:
+            self.auto = self._chemin_auto()
+    
+    def _maj_resultats(self):
+        base = self.app.chemin(self._chemin_auto())
+        self.lbl_cible.configure(text=f"Acquisition dans : {base}  (puis Mesure_00001… s'il est "
+                                    f"déjà rempli) — photos de réglage dans {base.parent / 'Photos'}")
+        p = self.app.v("calibration.dossier_images").get().strip()
+        self.lbl_resultats.configure(
+            text=f"Résultats dans {Path(p).parent / 'results_calib'}" if p else "Résultats dans —")
+    
+    def maj_plans(self):
+        a = self.app
+        z0, z1 = a.nombre("calibration.z_depart"), a.nombre("calibration.z_fin")
+        pas, stab = a.nombre("calibration.pas_z"), a.nombre("calibration.stabilisation")
+        v = a.nombre("calibration.vitesse_plateau")
+        if None in (z0, z1, pas, stab, v) or pas == 0 or v <= 0:
+            return self.lbl_plans.configure(text="valeurs invalides")
+        z = rg.z_liste(z0, z1, pas)
+        n = len(z)
+        duree = rg.duree_estimee(z, z[0], v, stab)
+        reste = "" if z[-1] == z1 else f" (Z fin {z1:g} non atteint avec ce pas)"
+        self.lbl_plans.configure(text=f"{n} plans : {', '.join(map(str, z[:4]))}"
+                                        f"{', …' if n > 5 else ''}{', ' + str(z[-1]) if n > 4 else ''}"
+                                        f"{reste} — environ {duree / 60:.1f} min (origine puis Z = {z[0]:g})")
+
+    # ----------------------------------------------------------------- 2
+
+            
     def reglage(self, f):
         a = self.app
         port = lambda: a.v("materiel.port_imprimante").get()  # noqa: E731
@@ -69,8 +147,6 @@ class OngletCalibration(ttk.Frame):
             a.v("materiel.sn_droite").get())).pack(side="left", padx=3)
         a.champ(f, 3, "Aller à Z", "calibration.z_reglage", "mm")
         self.origine_avant = tk.BooleanVar(value=True)
-        ttk.Checkbutton(f, text="origine avant (G28)", variable=self.origine_avant
-                        ).grid(row=3, column=3, padx=6, sticky="w")
         ttk.Button(f, text="Aller", command=self.aller_z).grid(row=3, column=4, padx=4)
 
     def test_hauteur(self):
@@ -186,115 +262,35 @@ class OngletCalibration(ttk.Frame):
         self.app.outil(f"Plateau à Z = {z}", "aller_z",
                        self.app.v("materiel.port_imprimante").get(), z, *extra)
 
-    # ----------------------------------------------------------------- 2
-    def dossier(self, f):
-        """Racine / date / nom de l'essai -> <racine>/<date>/calib (images),
-        <date>/Photos (photos de réglage) et <date>/results_calib (calcul, règle de Pycaso)."""
-        a = self.app
-        a.v("calibration.date").set(time.strftime("%Y_%m_%d"))   # aujourd'hui, comme l'original
-        a.chemin_choisi(f, 0, "Dossier racine", "materiel.dossier_racine", dossier=True, largeur=60)
-        ligne = ttk.Frame(f)
-        ligne.grid(row=1, column=0, columnspan=4, sticky="w", padx=4, pady=3)
-        ttk.Label(ligne, text="Date (AAAA_MM_JJ)").pack(side="left", padx=(4, 6))
-        ttk.Entry(ligne, textvariable=a.v("calibration.date"), width=12).pack(side="left")
-        ttk.Label(ligne, text="Dossier de calibration").pack(side="left", padx=(18, 6))
-        ttk.Entry(ligne, textvariable=a.v("calibration.nom_essai"), width=22).pack(side="left")
-        self.lbl_cible = a.note(f, 2, "", 1100)
-        a.chemin_choisi(f, 3, "Images pour le calcul", "calibration.dossier_images",
-                        dossier=True, largeur=60)
-        self.lbl_resultats = a.note(f, 4, "", 1100)
-        # le dossier du calcul suit racine / date / nom tant qu'il n'a pas été modifié à la main
-        self.auto = self._chemin_auto()
-        memo = a.v("calibration.dossier_images").get().strip()
-        if not memo or a.v("calibration.date").get() not in memo:
-            a.v("calibration.dossier_images").set(self.auto)
-        for cle in ("calibration.date", "materiel.dossier_racine", "calibration.nom_essai"):
-            a.v(cle).trace_add("write", lambda *_: self._suivre_date())
-        a.v("calibration.dossier_images").trace_add("write", lambda *_: self._maj_resultats())
-        self._maj_resultats()
-
-    # ----------------------------------------------------------------- 2
-    def plans(self, f):
-        a = self.app
-        ligne = ttk.Frame(f)
-        ligne.grid(row=0, column=0, columnspan=4, sticky="w", padx=4, pady=4)
-        for txt, cle in (("Z départ", "z_depart"), ("Z fin", "z_fin"), ("pas", "pas_z")):
-            ttk.Label(ligne, text=txt).pack(side="left", padx=(8, 4))
-            ttk.Entry(ligne, textvariable=a.v(f"calibration.{cle}"), width=7).pack(side="left")
-        ttk.Label(ligne, text="mm", style="Petit.TLabel").pack(side="left", padx=4)
-        self.lbl_plans = a.note(f, 1, "", 620)
-        for k in ("z_depart", "z_fin", "pas_z", "stabilisation", "vitesse_plateau"):
-            a.v(f"calibration.{k}").trace_add("write", lambda *_: self.maj_plans())
-
-    def _chemin_auto(self):
-        a = self.app
-        racine = a.v("materiel.dossier_racine").get().rstrip("/")
-        return f"{racine}/{a.v('calibration.date').get()}/{a.v('calibration.nom_essai').get()}"
-
-    def _suivre_date(self):
-        v = self.app.v("calibration.dossier_images")
-        if v.get() == self.auto:
-            self.auto = self._chemin_auto()
-            v.set(self.auto)
-        else:
-            self.auto = self._chemin_auto()
-
-    def _maj_resultats(self):
-        base = self.app.chemin(self._chemin_auto())
-        self.lbl_cible.configure(text=f"Acquisition dans : {base}  (puis {base.name}_00001… s'il est "
-                                      f"déjà rempli) — photos de réglage dans {base.parent / 'Photos'}")
-        p = self.app.v("calibration.dossier_images").get().strip()
-        self.lbl_resultats.configure(
-            text=f"Résultats dans {Path(p).parent / 'results_calib'}" if p else "Résultats dans —")
-
-    def maj_plans(self):
-        a = self.app
-        z0, z1 = a.nombre("calibration.z_depart"), a.nombre("calibration.z_fin")
-        pas, stab = a.nombre("calibration.pas_z"), a.nombre("calibration.stabilisation")
-        v = a.nombre("calibration.vitesse_plateau")
-        if None in (z0, z1, pas, stab, v) or pas == 0 or v <= 0:
-            return self.lbl_plans.configure(text="valeurs invalides")
-        z = rg.z_liste(z0, z1, pas)
-        n = len(z)
-        duree = rg.duree_estimee(z, z[0], v, stab)
-        reste = "" if z[-1] == z1 else f" (Z fin {z1:g} non atteint avec ce pas)"
-        self.lbl_plans.configure(text=f"{n} plans : {', '.join(map(str, z[:4]))}"
-                                      f"{', …' if n > 5 else ''}{', ' + str(z[-1]) if n > 4 else ''}"
-                                      f"{reste} — environ {duree / 60:.1f} min (origine puis Z = {z[0]:g})")
+    
 
     # ----------------------------------------------------------------- 3
     def acquisition(self, f):
         a = self.app
-        self.lbl_acq = ttk.Label(f, style="Petit.TLabel", wraplength=620)
-        self.lbl_acq.grid(row=0, column=0, columnspan=4, sticky="w", padx=8, pady=3)
-        for k in ("expo_gauche", "expo_droite", "stabilisation", "vitesse_plateau",
-                  "graphe_hauteur"):
-            a.v(f"calibration.{k}").trace_add("write", lambda *_: self.maj_acq())
-        self.maj_acq()
+        a.champ(f, 0, "Exposition gauche", "calibration.expo_gauche", "µs")
+        a.champ(f, 1, "Exposition droite", "calibration.expo_droite", "µs")
+        a.champ(f, 2, "Stabilisation avant photo", "calibration.stabilisation", "s",
+                aide="Temps pendant lequel le plateau doit rester à la bonne hauteur "
+                     "(position lue) avant le déclenchement des caméras")
+        a.case(f, 5, "Afficher le graphe de la hauteur du plateau (Grapher crappy)",
+               "calibration.graphe_hauteur")
+        a.champ(f, 4, "Vitesse du plateau", "calibration.vitesse_plateau", "mm/min")
+        a.note(f, 7, "Plan par plan : le plateau va à la hauteur, la position lue doit être "
+                     "atteinte et stable, puis les deux caméras sont déclenchées ; on attend "
+                     "les deux images avant le plan suivant. La hauteur lue au moment de chaque "
+                     "photo est notée (positions_photos.csv et document des hauteurs).", 620)
         self.maj_plans()
         b = ttk.Frame(f)
-        b.grid(row=1, column=0, columnspan=4, sticky="w", padx=4, pady=6)
+        b.grid(row=6, column=0, columnspan=4, sticky="w", padx=4, pady=6)
         ttk.Button(b, text="▶  Lancer l'acquisition", style="Go.TButton",
                    command=self.lancer_acquisition).pack(side="left", padx=3)
         ttk.Button(b, text="Écrire le document des hauteurs", command=self.document
                    ).pack(side="left", padx=3)
         ttk.Button(b, text="Ouvrir le document", command=self.ouvrir_document
                    ).pack(side="left", padx=3)
-        a.note(f, 2, "Le document hauteurs_calibration.txt (et .csv) est écrit "
+        a.note(f, 8, "Le document hauteurs_calibration.txt (et .csv) est écrit "
                      "automatiquement dans le dossier images calib à chaque acquisition : "
                      "hauteur de départ, pas, hauteur de chaque plan et images prises.", 620)
-
-    def maj_acq(self):
-        """Rappel des réglages d'acquisition (modifiables dans l'onglet Matériel)."""
-        v = lambda k: self.app.v(f"calibration.{k}").get()
-        try:
-            graphe = "graphe de la hauteur" if v("graphe_hauteur") else "sans graphe"
-        except Exception:
-            graphe = ""
-        self.lbl_acq.configure(text=(
-            f"Expositions {v('expo_gauche')} / {v('expo_droite')} µs, stabilisation "
-            f"{v('stabilisation')} s, plateau {v('vitesse_plateau')} mm/min, {graphe} "
-            "— réglages dans l'onglet Matériel."))
 
     def lancer_acquisition(self):
         a = self.app
@@ -404,8 +400,8 @@ class OngletCalibration(ttk.Frame):
             if figures:
                 self._montrer_figures(figures, d.parent / "results_calib")
             if code == 0 and attendu is not None and attendu.is_file():
-                a.v("essai.deformation.fichier_constantes").set(str(attendu.resolve()))
-                a.essai.chercher_calibrations()
+                a.v("essai.deformation.fichier_constantes").set(str(attendu))
+                a.v("essai.deformation.methode_3d").set(c["methode"])
                 a.log(f"Calibration retenue pour le pilotage 3D : {attendu}", "info")
         a.lancer(f"Calibration {c['methode']}",
                  [a.python(), "-u", str(a.ICI / "lancer_calibration.py"), "calcul", str(fichier)],
@@ -444,8 +440,8 @@ class OngletCalibration(ttk.Frame):
         a = self.app
         n_g, n_d = self._compter(d)
         if not n_g or not n_d:
-            # images ailleurs ? (calib_00001… d'une autre acquisition du même jour)
-            voisins = sorted((p for p in d.parent.glob(d.name.split("_0")[0] + "*") if p.is_dir() and p != d
+            # images ailleurs ? (Mesure_00001… d'une autre acquisition du même essai)
+            voisins = sorted((p for p in d.parent.glob("Mesure*") if p.is_dir() and p != d
                               and min(self._compter(p)) > 0), key=lambda p: p.stat().st_mtime)
             texte = (f"Aucune image dans\n{d}\n(gauche {n_g}, droite {n_d}).")
             if voisins and messagebox.askyesno("Aucune image", texte + "\n\nUtiliser le dossier "
@@ -453,7 +449,7 @@ class OngletCalibration(ttk.Frame):
                 a.v("calibration.dossier_images").set(str(voisins[-1]))
                 return self._verifier_images(voisins[-1])
             if not voisins:
-                messagebox.showerror("Aucune image", texte + "\n\nChoisir le dossier calib de "
+                messagebox.showerror("Aucune image", texte + "\n\nChoisir le dossier Mesure de "
                                      "l'acquisition dans « Images pour le calcul ».")
             return False
         try:

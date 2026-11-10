@@ -27,9 +27,6 @@ import crappy  # noqa: E402
 import blocs_pilotage as bp  # noqa: E402
 import simulation  # noqa: E402,F401  enregistre AlicatSimule
 from reglages import dossier_base_essai, dossier_unique  # noqa: E402
-import compat_cv2  # noqa: E402
-
-compat_cv2.installer()     # chemins accentués sous Windows (images enregistrées par crappy)
 
 # crappy ne garde qu'une référence faible vers les blocs : on les conserve ici,
 # sinon un bloc créé directement dans crappy.link(...) disparaît.
@@ -67,7 +64,7 @@ def main(fichier_config):
     fs = float(mat["pleine_echelle"])
 
     date = time.strftime("%Y_%m_%d")
-    dossier = dossier_unique(dossier_base_essai(cfg, date))
+    dossier = dossier_unique(dossier_base_essai(cfg, date) / "Mesure")
     # le chemin est lu par l'interface : ne pas changer ce préfixe
     print(f"DOSSIER_ESSAI={dossier.resolve()}", flush=True)
     with open(dossier / "parametres_essai.json", "w", encoding="utf-8") as f:
@@ -206,8 +203,7 @@ def main(fichier_config):
         controleur = bp.PilotageDeformation(
             consigne=float(d["eps_max"]), vitesse=float(d["vitesse"]),
             duree_palier=float(d["duree_palier"]),
-            debit_tension=float(d["debit_tension"]), seuil_tension=float(d["seuil_tension"]),
-            tau=float(d["tau"]), fenetre=float(d["fenetre"]),
+            kp=float(d["kp"]), ki=float(d["ki"]), kff=float(d["kff"]),
             timeout_mesure=float(d["timeout_mesure"]),
             estimateur=estimateur, **commun)
         sources = [source_3d] if source_3d else [ver, vel]
