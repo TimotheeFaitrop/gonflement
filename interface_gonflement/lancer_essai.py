@@ -178,10 +178,15 @@ def main(fichier_config):
                     "points_3d"])))
 
     # ---------------------------------------------------------- contrôleur
+    # Une limite n'a de sens que si la grandeur n'est pas déjà fixée par la consigne : en mode
+    # débit le champ « débit max » est masqué dans l'interface (pas de limite), en mode
+    # pression le champ « pression max » l'est aussi. Sans cela, une ancienne valeur oubliée
+    # briderait le débit ou couperait l'essai.
+    pas_de_limite = 1e12
     commun = dict(pleine_echelle=fs,
-                  debit_max=float(ess["debit_max"]),
+                  debit_max=pas_de_limite if mode == "debit" else float(ess["debit_max"]),
                   vitesse_cmd_max=float(ess["vitesse_cmd_max"]),
-                  pression_max=float(ess["pression_max"]),
+                  pression_max=pas_de_limite if mode == "pression" else float(ess["pression_max"]),
                   duree_max=float(ess["duree_max"]),
                   arret_auto=bool(ess["arret_auto"]),
                   port_commandes=int(mat["port_udp_commandes"]))

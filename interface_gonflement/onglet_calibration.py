@@ -1,6 +1,6 @@
 """Onglet Calibration : reprend les programmes du dépôt.
 
-  1. Réglage       test hauteur 20 -> 120 mm, début d'essai (Z = 70), origine (G92), photos
+  1. Réglage       test hauteur (Z départ -> Z fin des plans), origine (G92), photos
   En haut         dossier racine, date, nom de l'essai (toujours visibles)
   2. Plans z       Z départ, Z fin, pas
   3. Acquisition   en boucle fermée : photo une fois le plateau arrivé (sequence_calibration.py)
@@ -53,6 +53,7 @@ class OngletCalibration(ttk.Frame):
         Photos (photos de réglage) et results_calib (calcul)."""
         a = self.app
         a.v("calibration.date").set(time.strftime("%Y_%m_%d"))   # aujourd'hui, comme l'original
+        self._lier_nom_essai()
         a.chemin_choisi(f, 0, "Dossier racine", "materiel.dossier_racine", dossier=True, largeur=60)
         ligne = ttk.Frame(f)
         ligne.grid(row=1, column=0, columnspan=4, sticky="w", padx=4, pady=3)
@@ -74,6 +75,23 @@ class OngletCalibration(ttk.Frame):
         a.v("calibration.dossier_images").trace_add("write", lambda *_: self._maj_resultats())
         self._maj_resultats()
     
+    def _lier_nom_essai(self):
+        """« Nom de l'essai » (calibration) et « Échantillon » (onglet Essai) désignent le même
+        dossier <racine>/<date>/<nom> : les deux champs se recopient l'un l'autre.
+        (Le dossier racine est déjà une seule variable, materiel.dossier_racine.)"""
+        a = self.app
+        cal, ess = a.v("calibration.nom_essai"), a.v("essai.echantillon")
+        if not cal.get().strip():
+            cal.set(ess.get())
+        elif not ess.get().strip():
+            ess.set(cal.get())
+
+        def recopier(src, dst):
+            return lambda *_: dst.set(src.get()) if dst.get() != src.get() else None
+
+        cal.trace_add("write", recopier(cal, ess))
+        ess.trace_add("write", recopier(ess, cal))
+
     def plans(self, f):
         a = self.app
         ligne = ttk.Frame(f)
@@ -112,6 +130,7 @@ class OngletCalibration(ttk.Frame):
         z0, z1 = a.nombre("calibration.z_depart"), a.nombre("calibration.z_fin")
         pas, stab = a.nombre("calibration.pas_z"), a.nombre("calibration.stabilisation")
         v = a.nombre("calibration.vitesse_plateau")
+        self._maj_test_hauteur(z0, z1)
         if None in (z0, z1, pas, stab, v) or pas == 0 or v <= 0:
             return self.lbl_plans.configure(text="valeurs invalides")
         z = rg.z_liste(z0, z1, pas)
@@ -123,34 +142,40 @@ class OngletCalibration(ttk.Frame):
                                         f"{reste} — environ {duree / 60:.1f} min (origine puis Z = {z[0]:g})")
 
     # ----------------------------------------------------------------- 2
-
-            
+           
     def reglage(self, f):
         a = self.app
         port = lambda: a.v("materiel.port_imprimante").get()  # noqa: E731
         b = ttk.Frame(f)
         b.grid(row=0, column=0, columnspan=5, sticky="w", padx=4, pady=4)
-        ttk.Button(b, text="Test hauteur (Z 20 → 120)", command=self.test_hauteur
-                   ).pack(side="left", padx=3)
-        ttk.Button(b, text="Début d'essai (Z = 70)", command=lambda: a.outil(
-            "Plateau en début d'essai", "aller_z", port(), 70, "--origine")).pack(side="left", padx=3)
-        a.note(f, 1, "Test hauteur : aperçu des deux caméras avec leur netteté en direct ; origine "
-                     "puis Z = 20 mm, Espace pour passer à Z = 120 mm (et revenir), q pour fermer. "
-                     "La netteté de chaque hauteur est notée dans la console.", 620)
-        b = ttk.Frame(f)
-        b.grid(row=2, column=0, columnspan=5, sticky="w", padx=4, pady=4)
-        ttk.Button(b, text="Changer origine Z", command=self.changer_origine).pack(side="left", padx=3)
+        
         ttk.Button(b, text="Aperçu", command=self.apercu).pack(side="left", padx=3)
         ttk.Button(b, text="Prendre une photo", command=self.photo).pack(side="left", padx=3)
-        ttk.Button(b, text="Tester les caméras", command=lambda: a.outil(
-            "Test caméras", "test_cameras", a.v("materiel.sn_gauche").get(),
-            a.v("materiel.sn_droite").get())).pack(side="left", padx=3)
+        ttk.Button(b, text="Changer origine Z", command=self.changer_origine).pack(side="left", padx=3)
+        self.btn_test = ttk.Button(b, text="Test hauteur", command=self.test_hauteur)
+        self.btn_test.pack(side="left", padx=3)
+        self.lbl_test = a.note(f, 1, "", 620)
+
         a.champ(f, 3, "Aller à Z", "calibration.z_reglage", "mm")
         self.origine_avant = tk.BooleanVar(value=True)
         ttk.Button(f, text="Aller", command=self.aller_z).grid(row=3, column=4, padx=4)
 
+    def _maj_test_hauteur(self, z0, z1):
+        """Le test de hauteur va de Z départ à Z fin, les mêmes que les plans (partie 1)."""
+        if not hasattr(self, "btn_test") or z0 is None or z1 is None:
+            return
+        self.btn_test.configure(text=f"Test hauteur (Z {z0:g} → {z1:g})")
+        self.lbl_test.configure(text=(
+            "Test hauteur : aperçu des deux caméras en direct ; origine puis "
+            f"Z = {z0:g} mm, Espace pour passer à Z = {z1:g} mm (et revenir), q pour fermer. "
+            "Hauteurs reprises des plans z (1)."))
+
     def test_hauteur(self):
         a = self.app
+        z0, z1 = a.nombre("calibration.z_depart"), a.nombre("calibration.z_fin")
+        if z0 is None or z1 is None or not (0 <= z0 <= 200 and 0 <= z1 <= 200):
+            return messagebox.showerror("Test hauteur", "Z départ / Z fin invalides "
+                                                        "(plage 0–200 mm) : voir 1. Plans z")
         if not a.sauver_reglages():
             return
         if a.reglages["materiel"]["simulation"]:
@@ -160,7 +185,8 @@ class OngletCalibration(ttk.Frame):
                              a.v("materiel.sn_gauche").get(), a.v("materiel.sn_droite").get(),
                              a.v("calibration.expo_gauche").get(),
                              a.v("calibration.expo_droite").get(),
-                             a.v("materiel.port_imprimante").get()]))
+                             a.v("materiel.port_imprimante").get(),
+                             f"{z0:g}", f"{z1:g}"]))
 
     def apercu(self):
         a = self.app
@@ -174,7 +200,6 @@ class OngletCalibration(ttk.Frame):
             "Changer l'origine Z",
             "Valeur à donner à la position ACTUELLE du plateau (mm) :\n"
             "(0 = le plateau est à l'origine ici)\n\n"
-            "Attention : une prise d'origine (G28 : « origine avant », Test hauteur, "
             "Début d'essai, acquisition) ou un redémarrage de l'imprimante revient à "
             "l'origine de la machine.", initialvalue=0.0, parent=self)
         if z is not None:
@@ -267,18 +292,13 @@ class OngletCalibration(ttk.Frame):
     # ----------------------------------------------------------------- 3
     def acquisition(self, f):
         a = self.app
-        a.champ(f, 0, "Exposition gauche", "calibration.expo_gauche", "µs")
-        a.champ(f, 1, "Exposition droite", "calibration.expo_droite", "µs")
         a.champ(f, 2, "Stabilisation avant photo", "calibration.stabilisation", "s",
                 aide="Temps pendant lequel le plateau doit rester à la bonne hauteur "
                      "(position lue) avant le déclenchement des caméras")
         a.case(f, 5, "Afficher le graphe de la hauteur du plateau (Grapher crappy)",
                "calibration.graphe_hauteur")
         a.champ(f, 4, "Vitesse du plateau", "calibration.vitesse_plateau", "mm/min")
-        a.note(f, 7, "Plan par plan : le plateau va à la hauteur, la position lue doit être "
-                     "atteinte et stable, puis les deux caméras sont déclenchées ; on attend "
-                     "les deux images avant le plan suivant. La hauteur lue au moment de chaque "
-                     "photo est notée (positions_photos.csv et document des hauteurs).", 620)
+    
         self.maj_plans()
         b = ttk.Frame(f)
         b.grid(row=6, column=0, columnspan=4, sticky="w", padx=4, pady=6)
@@ -288,6 +308,10 @@ class OngletCalibration(ttk.Frame):
                    ).pack(side="left", padx=3)
         ttk.Button(b, text="Ouvrir le document", command=self.ouvrir_document
                    ).pack(side="left", padx=3)
+        a.note(f, 7, "Plan par plan : le plateau va à la hauteur, la position lue doit être "
+                             "atteinte et stable, puis les deux caméras sont déclenchées ; on attend "
+                             "les deux images avant le plan suivant. La hauteur lue au moment de chaque "
+                             "photo est notée (positions_photos.csv et document des hauteurs).", 620)
         a.note(f, 8, "Le document hauteurs_calibration.txt (et .csv) est écrit "
                      "automatiquement dans le dossier images calib à chaque acquisition : "
                      "hauteur de départ, pas, hauteur de chaque plan et images prises.", 620)

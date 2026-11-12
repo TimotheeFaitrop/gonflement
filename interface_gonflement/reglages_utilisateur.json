@@ -13,7 +13,7 @@
     "expo_droite": 41389,
     "expo_gauche": 31740,
     "taille_image": 2048,
-    "dossier_racine": "../../Expériences",
+    "dossier_racine": "C:/Users/jazzo/Desktop/doctorat/code/Donnees_Gonflement/Donnees/13-06",
     "port_udp_donnees": 50555,
     "port_udp_commandes": 50556
   },
@@ -30,7 +30,7 @@
     "vitesse_cmd_max": 100.0,
     "arret_auto": true,
     "debit": {
-      "consigne": 13.2,
+      "consigne": 400.0,
       "duree_rampe": 20.0,
       "attente": 2.0,
       "duree_palier": 0.0
@@ -44,9 +44,9 @@
     },
     "deformation": {
       "source": "3D",
-      "composante": "exx",
+      "composante": "eyy",
       "camera": "moyenne",
-      "eps_max": 15.0,
+      "eps_max": 60.0,
       "vitesse": 0.02,
       "duree_palier": 0.0,
       "kp": 20.0,
@@ -70,8 +70,8 @@
     "expo_gauche": 28757,
     "graphe_hauteur": true,
     "z_reglage": 70.0,
-    "date": "2026_11_10",
-    "dossier_images": "../../Expériences/2026_11_10/Mvt_Rigide/Mesure",
+    "date": "2026_11_12",
+    "dossier_images": "C:/Users/jazzo/Desktop/doctorat/code/Donnees_Gonflement/Donnees/13-06/2026_11_12/Mvt_Rigide/Mesure",
     "methode": "Lagrange",
     "pform": "4",
     "iterations": 10,

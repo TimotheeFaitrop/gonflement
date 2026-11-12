@@ -23,6 +23,139 @@ TITRES = {"debit": "Consigne de débit", "pression": "Consigne de pression",
           "deformation": "Consigne de déformation"}
 
 
+def limite_utile(cle, mode):
+    """Une limite n'a de sens que si la grandeur n'est pas déjà fixée par la consigne :
+    en mode débit la consigne EST le débit, en mode pression elle EST la pression."""
+    return not ((cle == "debit_max" and mode == "debit")
+                or (cle == "pression_max" and mode == "pression"))
+
+
+CLES_PROFIL = ("essai.mode",
+               "essai.debit.consigne", "essai.debit.duree_rampe", "essai.debit.attente",
+               "essai.debit.duree_palier",
+               "essai.pression.consigne", "essai.pression.vitesse", "essai.pression.duree_palier",
+               "essai.deformation.eps_max", "essai.deformation.vitesse",
+               "essai.deformation.duree_palier")
+
+
+def profil_prevu(app):
+    """Consigne prévue en fonction du temps, d'après les champs de l'onglet.
+    Renvoie None si une valeur est invalide, sinon un dict :
+      points   [(t, y), ...]            courbe de consigne
+      illimite True si le palier n'a pas de fin (la dernière portion est alors indicative)
+      t_palier instant où le palier commence
+      duree    durée totale (None si illimitée)."""
+    n, mode = app.nombre, app.v("essai.mode").get()
+    if mode == "debit":
+        y, rampe, attente, palier = (n("essai.debit.consigne"), n("essai.debit.duree_rampe"),
+                                     n("essai.debit.attente"), n("essai.debit.duree_palier"))
+        if None in (y, rampe, attente, palier) or y < 0 or rampe < 0 or attente < 0:
+            return None
+        pts = [(0.0, 0.0)]
+        if attente > 0:
+            pts.append((attente, 0.0))
+        pts.append((attente + rampe, y))                # rampe = 0 : échelon vertical
+        note = ""
+    else:
+        cle = "pression" if mode == "pression" else "deformation"
+        y = n("essai.pression.consigne" if mode == "pression" else "essai.deformation.eps_max")
+        vit, palier = n(f"essai.{cle}.vitesse"), n(f"essai.{cle}.duree_palier")
+        if None in (y, vit, palier) or y < 0 or vit <= 0:
+            return None
+        pts = [(0.0, 0.0), (y / vit, y)]
+        note = "  (montée supposée depuis 0)"
+    if palier < 0:
+        return None
+    t = pts[-1][0]
+    illimite = palier == 0
+    pts.append((t + (max(0.35 * t, 10.0) if illimite else palier), y))
+    return {"points": pts, "illimite": illimite, "t_palier": t, "note": note,
+            "duree": None if illimite else pts[-1][0]}
+
+
+def _pas_propre(vmax, n=4):
+    """Pas de graduation « rond » (1, 2, 2.5, 5 × 10^k) donnant environ n graduations."""
+    brut = vmax / n
+    mag = 10 ** math.floor(math.log10(brut))
+    return next(m * mag for m in (1, 2, 2.5, 5, 10) if brut <= m * mag * (1 + 1e-9))
+
+
+class ProfilPrevu(tk.Canvas):
+    """Courbe de consigne prévue de l'essai, affichée avant son lancement."""
+
+    def __init__(self, parent, palette, hauteur=165):
+        self.P = palette
+        try:
+            fond = palette["panneau"]
+        except Exception:
+            fond = "#ffffff"
+        super().__init__(parent, height=hauteur, bg=fond, highlightthickness=1,
+                         highlightbackground="#888888")
+        self.titre, self.unite, self.profil = "", "", None
+        self.bind("<Configure>", lambda _e: self.dessiner())
+
+    def afficher(self, titre, unite, profil):
+        self.titre, self.unite, self.profil = titre, unite, profil
+        self.dessiner()
+
+    def dessiner(self):
+        self.delete("all")
+        w, h = self.winfo_width(), self.winfo_height()
+        if w < 120 or h < 80:
+            return
+        r, g, b = (c / 65535 for c in self.winfo_rgb(self.cget("bg")))
+        clair = 0.299 * r + 0.587 * g + 0.114 * b > 0.5
+        fg, grille = ("#222222", "#d0d0d0") if clair else ("#dddddd", "#4a4a4a")
+        try:
+            trace = self.P["accent"]
+        except Exception:
+            trace = "#2a7de1"
+        police = ("TkDefaultFont", 8)
+        p = self.profil
+        if p is None:
+            self.create_text(w / 2, h / 2, fill=fg, text="Profil prévu : valeurs de consigne invalides")
+            return
+        gauche, droite, haut, bas = 56, 16, 24, 26
+        x0, x1, ybas, yhaut = gauche, w - droite, h - bas, haut
+        pts = p["points"]
+        tmax = pts[-1][0] or 1.0
+        ymax = max(y for _, y in pts) or 1.0
+        pas_y, pas_t = _pas_propre(ymax), _pas_propre(tmax, 6)
+        ymax = math.ceil(ymax / pas_y - 1e-9) * pas_y
+
+        def X(t):
+            return x0 + (x1 - x0) * t / tmax
+
+        def Y(y):
+            return ybas - (ybas - yhaut) * y / ymax
+
+        k = 0
+        while k * pas_y <= ymax * (1 + 1e-9):
+            self.create_line(x0, Y(k * pas_y), x1, Y(k * pas_y), fill=grille)
+            self.create_text(x0 - 5, Y(k * pas_y), text=f"{k * pas_y:g}", anchor="e", fill=fg, font=police)
+            k += 1
+        k = 0
+        while k * pas_t <= tmax * (1 + 1e-9):
+            self.create_line(X(k * pas_t), yhaut, X(k * pas_t), ybas, fill=grille)
+            self.create_text(X(k * pas_t), ybas + 4, text=f"{k * pas_t:g}", anchor="n", fill=fg, font=police)
+            k += 1
+        self.create_line(x0, yhaut, x0, ybas, x1, ybas, fill=fg)
+
+        plein = pts[:-1] if p["illimite"] else pts
+        self.create_line(*[c for t, y in plein for c in (X(t), Y(y))], fill=trace, width=2)
+        if p["illimite"]:
+            (ta, ya), (tb, yb) = pts[-2], pts[-1]
+            self.create_line(X(ta), Y(ya), X(tb), Y(yb), fill=trace, width=2, dash=(5, 3))
+            self.create_text((X(ta) + X(tb)) / 2, Y(yb) - 4, text="palier illimité", anchor="s",
+                             fill=fg, font=police)
+        self.create_text(x0, 4, anchor="nw", fill=fg, font=("TkDefaultFont", 9, "bold"),
+                         text=f"{self.titre} prévue ({self.unite}){p['note']}")
+        bilan = (f"palier atteint à t = {p['t_palier']:g} s" if p["illimite"]
+                 else f"durée totale {p['duree']:g} s")
+        self.create_text(x1, 4, anchor="ne", fill=fg, font=police, text=bilan)
+        self.create_text(x1, h - 3, anchor="se", fill=fg, font=police, text="t (s)")
+
+
 class OngletEssai(ttk.Frame):
 
     def __init__(self, parent, app):
@@ -40,6 +173,12 @@ class OngletEssai(ttk.Frame):
         self.panneau_direct(droite)
         self.courbes = Courbes(droite, a.P)
         self.courbes.pack(fill="both", expand=True, pady=(6, 4))
+        # profil de consigne prévu : visible tant qu'aucun essai n'est en cours (voir etat_boutons)
+        self.profil = ProfilPrevu(droite, a.P)
+        self._profil_en_attente = None
+        for cle in CLES_PROFIL:
+            a.v(cle).trace_add("write", lambda *_: self.planifier_profil())
+        self.etat_boutons()
         self.maj_mode()
         self.maj_source()
 
@@ -48,13 +187,15 @@ class OngletEssai(ttk.Frame):
         a = self.app
         f = a.cadre(g, "Échantillon et mode de pilotage")
         a.champ(f, 0, "Échantillon", "essai.echantillon", largeur=24)
-        a.chemin_choisi(f, 1, "Dossier de l'essai", "essai.dossier", dossier=True, largeur=22)
-        self.lbl_prevu = a.note(f, 2, "")
+        # même variable que le « Dossier racine » de l'onglet Calibration : choisi ici, il l'est là-bas
+        a.chemin_choisi(f, 1, "Dossier racine", "materiel.dossier_racine", dossier=True, largeur=22)
+        a.chemin_choisi(f, 2, "Dossier de l'essai", "essai.dossier", dossier=True, largeur=22)
+        self.lbl_prevu = a.note(f, 3, "")
         for cle in ("essai.echantillon", "essai.dossier", "materiel.dossier_racine"):
             a.v(cle).trace_add("write", lambda *_: self.maj_prevu())
         self.maj_prevu()
         modes = ttk.Frame(f)
-        modes.grid(row=3, column=0, columnspan=3, sticky="w", padx=4, pady=4)
+        modes.grid(row=4, column=0, columnspan=3, sticky="w", padx=4, pady=4)
         for i, (val, txt) in enumerate((("debit", "Débit"), ("pression", "Pression"),
                                         ("deformation", "Déformation"))):
             ttk.Radiobutton(modes, text=txt, value=val, variable=a.v("essai.mode"),
@@ -114,6 +255,9 @@ class OngletEssai(ttk.Frame):
         a.champ(f, 0, "Pression maximale", "essai.pression_max", "(unité P)",
                 aide="Au-delà, le débit est coupé définitivement")
         a.champ(f, 1, "Débit maximal", "essai.debit_max", "mL/min")
+        # widgets de chaque ligne, pour pouvoir les masquer selon le mode (voir maj_securite)
+        self.lignes_secu = {cle: f.grid_slaves(row=i)
+                            for i, cle in enumerate(("pression_max", "debit_max"))}
         a.champ(f, 2, "Variation max du débit", "essai.vitesse_cmd_max", "mL/min/s")
         a.champ(f, 3, "Durée maximale", "essai.duree_max", "s")
         a.case(f, 4, "Arrêter l'essai à la fin du profil", "essai.arret_auto")
@@ -181,10 +325,9 @@ class OngletEssai(ttk.Frame):
         ttk.Separator(cmd, orient="vertical").grid(row=0, column=4, rowspan=2, sticky="ns", padx=10)
         self.btn_pause = ttk.Button(cmd, text="⏸  Pause", width=14, command=self.basculer_pause)
         self.btn_pause.grid(row=0, column=5, padx=4)
-        b = ttk.Button(cmd, text="Terminer le profil", width=16,
-                       command=lambda: self.app.commande({"action": "fin"}))
+        b = ttk.Button(cmd, text="Terminer le profil", width=16, command=self.terminer_profil)
         b.grid(row=1, column=5, padx=4)
-        Bulle(b, "Coupe le débit comme en fin de palier (arrêt auto si coché)")
+        Bulle(b, "Coupe le débit et arrête la prise de points : l'essai se termine")
         self.boutons_direct += [self.btn_pause, b]
         self.lbl_dossier = ttk.Label(cmd, text="", style="Petit.TLabel")
         self.lbl_dossier.grid(row=0, column=6, padx=10, sticky="w")
@@ -218,8 +361,27 @@ class OngletEssai(ttk.Frame):
         self.cadre_consigne.configure(text=TITRES[mode])
         for u, txt in zip(self.unites, UNITES[mode]):
             u.configure(text=txt)
+        self.maj_securite(mode)
+        self.maj_profil()
         if not self.en_cours:
-            self.courbes.preparer(mode, self.app.nombre("essai.pression_max"))
+            self.courbes.preparer(mode, self.app.nombre("essai.pression_max")
+                                  if limite_utile("pression_max", mode) else None)
+
+    def planifier_profil(self):
+        """Regroupe les modifications successives des champs en un seul redessin."""
+        if self._profil_en_attente is None:
+            self._profil_en_attente = self.after_idle(self.maj_profil)
+
+    def maj_profil(self):
+        self._profil_en_attente = None
+        mode = self.app.v("essai.mode").get()
+        self.profil.afficher(TITRES[mode], UNITES[mode][0], profil_prevu(self.app))
+
+    def maj_securite(self, mode):
+        """N'affiche que les limites qui ont un sens pour le mode de pilotage."""
+        for cle, widgets in self.lignes_secu.items():
+            for w in widgets:
+                (w.grid if limite_utile(cle, mode) else w.grid_remove)()
 
     def maj_source(self):
         is3d = self.app.v("essai.deformation.source").get() == "3D"
@@ -272,6 +434,11 @@ class OngletEssai(ttk.Frame):
         for b in self.boutons_direct:
             b.configure(state="normal" if self.en_cours else "disabled")
         self.btn_pause.configure(text="▶  Reprendre" if self.en_pause else "⏸  Pause")
+        if hasattr(self, "profil"):        # profil prévu : avant / après l'essai seulement
+            if self.en_cours:
+                self.profil.pack_forget()
+            else:
+                self.profil.pack(fill="x", pady=(6, 0), before=self.courbes)
 
     # ================================================================ lancement
     def demarrer(self):
@@ -313,7 +480,8 @@ class OngletEssai(ttk.Frame):
             return
         mode = cfg["essai"]["mode"]
         self.courbes.donnees.clear()
-        self.courbes.preparer(mode, cfg["essai"]["pression_max"])
+        self.courbes.preparer(mode, cfg["essai"]["pression_max"]
+                              if limite_utile("pression_max", mode) else None)
         self.dossier = None
         self.lbl_dossier.configure(text="")
 
@@ -342,15 +510,17 @@ class OngletEssai(ttk.Frame):
             messagebox.showerror("Valeur invalide", f"« {var.get()} » n'est pas un nombre")
             return
         mode = self.mode_en_cours or self.app.v("essai.mode").get()
-        if action == "consigne":
-            pmax, qmax = self.app.nombre("essai.pression_max"), self.app.nombre("essai.debit_max")
-            if mode == "pression" and pmax is not None and x >= pmax:
-                return messagebox.showerror("Refusé", "Consigne ≥ pression maximale")
-            if mode == "debit" and qmax is not None and x > qmax:
-                return messagebox.showerror("Refusé", "Consigne > débit maximal")
         self.app.commande({"action": action, "valeur": x})
         unite = UNITES[mode][0 if action == "consigne" else 1]
         self.app.log(f"→ {action} = {x} {unite}", "info")
+
+    def terminer_profil(self):
+        """Fin du profil : débit coupé, puis arrêt de l'essai (donc de la prise de points),
+        que « Arrêter l'essai à la fin du profil » soit coché ou non
+        (le pilotage, blocs_pilotage.py, passe alors en arrêt automatique)."""
+        a = self.app
+        a.commande({"action": "fin"})
+        a.log("→ fin du profil : débit coupé, arrêt de la prise de points", "info")
 
     def basculer_pause(self):
         self.en_pause = not self.en_pause
@@ -365,12 +535,8 @@ def verifier(cfg):
         e.append("Nom d'échantillon vide")
     if ess["freq_cam"] <= 0:
         e.append("Fréquence des images doit être > 0")
-    if ess["debit_max"] <= 0:
+    if limite_utile("debit_max", ess["mode"]) and ess["debit_max"] <= 0:
         e.append("Débit maximal doit être > 0")
-    if ess["mode"] == "debit" and ess["debit"]["consigne"] > ess["debit_max"]:
-        e.append("Consigne de débit supérieure au débit maximal")
-    if ess["mode"] == "pression" and ess["pression"]["consigne"] >= ess["pression_max"]:
-        e.append("Consigne de pression ≥ pression maximale")
     if ess["mode"] == "deformation":
         if d["vitesse"] <= 0:
             e.append("Vitesse de déformation doit être > 0")
@@ -389,8 +555,13 @@ def resume(cfg):
            "pression": f"Pression {p['consigne']} à {p['vitesse']} /s",
            "deformation": f"Déformation {d['eps_max']} % à {d['vitesse']} %/s "
                           f"(mesure {d['source']})"}[ess["mode"]]
-    txt = (f"Échantillon : {ess['echantillon']}\n{txt}\n\nSécurité : P max {ess['pression_max']}, "
-           f"débit max {ess['debit_max']} mL/min, durée max {ess['duree_max']} s\n\n")
+    secu = []
+    if limite_utile("pression_max", ess["mode"]):
+        secu.append(f"P max {ess['pression_max']}")
+    if limite_utile("debit_max", ess["mode"]):
+        secu.append(f"débit max {ess['debit_max']} mL/min")
+    secu.append(f"durée max {ess['duree_max']} s")
+    txt = f"Échantillon : {ess['echantillon']}\n{txt}\n\nSécurité : {', '.join(secu)}\n\n"
     if cfg["materiel"]["simulation"]:
         return txt + "MODE SIMULATION (aucun matériel)."
     return txt + ("Vérifier : échantillon serré, compresseur ouvert, caméras / FT232R / "
