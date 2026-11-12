@@ -92,7 +92,6 @@ class Anisotropie:
                  voisins=0,
                  masque="disque",
                  rayon_masque=1.0,
-                 seuil_aberrants=2.0,       # filtre des taches aberrantes (mm), 0 = aucun (voir Deformation)
                  exclusions_manuelles=True, # retirer les taches exclues à la main (retouche_gui)
                  # --- Niveaux ---
                  niveau_min=0.40,           # fraction du déplacement z max
@@ -117,7 +116,6 @@ class Anisotropie:
                                        taille_grille=taille_grille, interpolation=interpolation,
                                        fonction_rbf=fonction_rbf, lissage=lissage, voisins=voisins,
                                        masque=masque, rayon_masque=rayon_masque,
-                                       seuil_aberrants=seuil_aberrants,
                                        exclusions_manuelles=exclusions_manuelles,
                                        inverser_z=False)      # le sens de z est géré ici (analyser)
         d = self.deformation
@@ -125,7 +123,6 @@ class Anisotropie:
         self.images = tuple(images)
         self.taille_grille, self.interpolation, self.fonction_rbf = d.taille_grille, d.interpolation, d.fonction_rbf
         self.lissage, self.voisins, self.masque, self.rayon_masque = d.lissage, d.voisins, d.masque, d.rayon_masque
-        self.seuil_aberrants = d.seuil_aberrants
         self.exclusions_manuelles = d.exclusions_manuelles
         self.niveau_min, self.niveau_max, self.pas_niveau = niveau_min, niveau_max, pas_niveau
         self.tolerance = tolerance
@@ -265,7 +262,7 @@ class Anisotropie:
               f"points par bande : min {min(bandes)}, médiane {int(np.median(bandes))}, max {max(bandes)}")
         if zmax > 1.5 * p99 > 0:
             print("  ⚠ Uz max est très au-dessus du 99e centile : pic isolé (tache aberrante ?). "
-                  "Baisser seuil_aberrants ou changer d'interpolation.")
+                  "Changer d'interpolation ?")
         elif zmax <= 0:
             print("  ⚠ Uz max ≤ 0 : le dôme est vers le bas, essayer « Sens de z » = inverser.")
         elif max(bandes) < 6:
