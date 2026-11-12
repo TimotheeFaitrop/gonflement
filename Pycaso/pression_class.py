@@ -9,6 +9,13 @@ Remplace getuzpress.py. Pour chaque image de la reconstruction :
     première mesure si demandé. Si les deux horloges ne partent pas du même instant, decalage_temps
     les recale : temps capteur = temps image + decalage_temps.
 
+  - déformation de Green-Lagrange E (classe Deformation, par rapport à l'image 0) en un point de mesure :
+    Exx, Eyy, Ezz. Le point est une tache (point_centre, choisie sur la photo avec point_gui), par défaut
+    celle qui est la plus proche du centre de la zone initiale.
+
+Trois figures sont toujours tracées : Uz max = f(pression), pression et Uz max = f(temps),
+pression = f(E au centre du dôme).
+
 Les taches sont chargées comme pour la déformation (classe Deformation) : exclusions manuelles,
 filtre des aberrants et sens de z (dôme vers le haut) y sont appliqués.
 
@@ -19,7 +26,7 @@ Fichiers :
     <essai>/reconstruction/<source>/      X3d, Y3d, Z3d (entrée)
     <essai>/video_extenso_left/           images de l'essai : temps dans le nom (entrée)
     <essai>/data_ali.txt                  temps, pression du capteur (entrée)
-    <essai>/pression/<source>/            pression_uz.txt et figures (sortie)
+    <essai>/pression/<source>/            pression_uz.txt (avec Exx, Eyy, Ezz au centre) et figures (sortie)
 """
 import glob
 import os
@@ -82,10 +89,13 @@ class PressionUz:
                  reference_deplacement=0,   # Uz = z − z(image de référence) ; 0 = état plat si source corrigée
                  centile=100.0,             # 100 = maximum ; 99 ou 99.5 : moins sensible à une tache isolée
                  inverser_z=None,           # None = auto (dôme vers le haut) ; voir Deformation
-                 seuil_aberrants=2.0,       # filtre des taches aberrantes (mm), 0 = aucun ; voir Deformation
                  exclusions_manuelles=True, # retirer les taches exclues à la main (retouche_gui)
+                 # --- Déformation au centre du dôme (E de Green-Lagrange) ---
+                 point_centre=None,         # tache où E est lue (indice de colonne de X3d, voir choisir_point) ;
+                                            # None = la tache la plus proche du centre de la zone initiale
+                 taille_grille=100,         # grille de la classe Deformation
+                 interpolation_deformation="rbf",   # "rbf", "rbf_polynome" ou "griddata" ; voir Deformation
                  # --- Résultats ---
-                 tracer_temps=True,         # figure supplémentaire : pression et Uz max en fonction du temps
                  enregistrer_resultats=True,
                  enregistrer_figures=True,
                  afficher_figures=True):
@@ -108,9 +118,14 @@ class PressionUz:
         self.reference_deplacement = int(reference_deplacement)
         self.centile = float(centile)
         self.inverser_z = inverser_z
-        self.seuil_aberrants = seuil_aberrants
         self.exclusions_manuelles = exclusions_manuelles
-        self.tracer_temps = tracer_temps
+        if interpolation_deformation not in Deformation.INTERPOLATIONS:
+            raise ValueError(f"interpolation_deformation inconnue : {interpolation_deformation} "
+                             f"(choix : {', '.join(Deformation.INTERPOLATIONS)})")
+        self.point_centre = None if point_centre is None else int(point_centre)
+        self.indice_point = None
+        self.taille_grille = int(taille_grille)
+        self.interpolation_deformation = interpolation_deformation
         self.enregistrer_resultats = enregistrer_resultats
         self.enregistrer_figures = enregistrer_figures
         self.afficher_figures = afficher_figures
@@ -189,6 +204,96 @@ class PressionUz:
         res[ok] = np.minimum(np.abs(t_p[i - 1] - t[ok]), np.abs(t_p[i] - t[ok]))
         return res
 
+    # ----- point de mesure -----
+
+    EXTENSIONS_IMAGES = (".tif", ".tiff", ".svg", ".jpg", ".jpeg", ".bmp")
+    DOSSIERS_PHOTOS = {"L": "video_extenso_left", "R": "video_extenso_right"}
+
+    def _deformation(self):
+        """Deformation réglée comme ce calcul (chargement des taches, grille, interpolation)."""
+        return Deformation(dossier_essai=self.dossier_essai, source=self.source,
+                           inverser_z=self.inverser_z, 
+                           exclusions_manuelles=self.exclusions_manuelles,
+                           taille_grille=self.taille_grille,
+                           interpolation=self.interpolation_deformation)
+
+    @property
+    def fichier_Lp(self):
+        """Lp_final.npy (positions en pixels des taches), ou Lp_final_corrige.npy pour une source corrigée."""
+        nom = Detect3D.FICHIER_LP_CORRIGE if self.est_corrigee else Detect3D.FICHIER_LP
+        return Path(self.dossier_essai) / Detect3D.SOUS_DOSSIER_ENTREE / nom
+
+    def pixels_taches(self, nb_colonnes):
+        """Positions en pixels (x, y) des taches de l'image 0 : [gauche, droite], chacune (nb_colonnes, 2).
+
+        Les colonnes sont celles de X3d : un indice de tache désigne le même point matériel partout.
+        Image 0 = état plat (photo_init) pour une source corrigée, sinon la 1re photo de l'essai.
+        """
+        Lp = np.load(self.fichier_Lp, allow_pickle=True)
+        ligne = 0
+        res = []
+        for cote in (0, 1):
+            p = np.asarray(Lp[ligne][cote], dtype=float)
+            if p.ndim == 2 and p.shape[0] != nb_colonnes and p.shape[1] == nb_colonnes:
+                p = p.T                                    # stocké (2, taches)
+            if p.ndim != 2 or p.shape[0] != nb_colonnes or p.shape[1] < 2:
+                raise ValueError(f"{self.fichier_Lp.name} : {p.shape} ne correspond pas aux "
+                                 f"{nb_colonnes} taches de X3d")
+            res.append(p[:, :2])
+        return res
+
+    def chemin_photo_init(self, cote):
+        """photo_init de la caméra "L" ou "R" (dans video_extenso_left / _right, sinon dans l'essai) ; None si absente."""
+        for d in (Path(self.dossier_essai) / self.DOSSIERS_PHOTOS[cote], Path(self.dossier_essai)):
+            trouves = sorted(p for p in d.glob("photo_init*")
+                             if p.is_file() and p.suffix.lower() in self.EXTENSIONS_IMAGES)
+            propres = [p for p in trouves if p.stem.lower().endswith(cote.lower())]
+            if propres or (trouves and d.name == self.DOSSIERS_PHOTOS[cote]):
+                return (propres or trouves)[0]
+        return None
+
+    @staticmethod
+    def indice_centre(d):
+        """Tache (colonne de X3d) la plus proche du centre de la zone initiale (image 0) ; d : Deformation chargée."""
+        x0, y0 = d.X[0], d.Y[0]
+        ok = np.isfinite(x0) & np.isfinite(y0) & np.isfinite(d.Z[0])
+        if not ok.any():
+            raise ValueError("Aucune tache valide à l'image 0")
+        xc, yc = (x0[ok].min() + x0[ok].max()) / 2, (y0[ok].min() + y0[ok].max()) / 2
+        dist = np.hypot(x0 - xc, y0 - yc)
+        dist[~ok] = np.inf
+        return int(np.argmin(dist))
+
+    def deformation_centre(self, d):
+        """Exx, Eyy, Ezz (Green-Lagrange, / image 0) de chaque image au point de mesure.
+
+        Le point est la tache point_centre (colonne de X3d), ou la plus proche du centre de la zone initiale
+        si point_centre est None. E est lu au nœud de la grille le plus proche de sa position initiale.
+        d : Deformation dont les taches sont déjà chargées (charger). Seul ce point est conservé pour chaque
+        image, pour ne pas garder tous les champs en mémoire.
+        Renvoie ((x, y) du nœud, tableau (images, 3)) ; l'indice de la tache est dans self.indice_point.
+        """
+        j = self.indice_centre(d) if self.point_centre is None else self.point_centre
+        if not 0 <= j < d.X.shape[1]:
+            raise ValueError(f"Tache {j} inexistante ({d.X.shape[1]} taches : 0 à {d.X.shape[1] - 1})")
+        if not (np.isfinite(d.X[0, j]) and np.isfinite(d.Y[0, j]) and np.isfinite(d.Z[0, j])):
+            raise ValueError(f"Tache {j} absente, exclue ou aberrante à l'image 0 : en choisir une autre")
+        self.indice_point = j
+        d.grille = d.construire_grille()
+        d._r_ref = (None, None)
+        g = d.grille
+        dist = (g["X"] - d.X[0, j]) ** 2 + (g["Y"] - d.Y[0, j]) ** 2
+        dist[~g["dedans"]] = np.inf                        # nœud hors du masque : NaN
+        ic, jc = np.unravel_index(np.argmin(dist), dist.shape)
+        centre = (float(g["X"][ic, jc]), float(g["Y"][ic, jc]))
+        nb = len(d.X)
+        E = np.full((nb, 3), np.nan)
+        for k in range(nb):
+            print(f"Déformation au point {j} : image {k + 1} / {nb}", end="\r")
+            E[k] = np.diag(d.calculer(k)["E"][ic, jc])
+        print()
+        return centre, E
+
     # ----- point d'entrée -----
 
     def lancer(self):
@@ -198,9 +303,7 @@ class PressionUz:
         """
         if not self.chemin_pression.is_file():
             raise FileNotFoundError(f"Fichier de pression introuvable : {self.chemin_pression}")
-        self.deformation = d = Deformation(dossier_essai=self.dossier_essai, source=self.source,
-                                           inverser_z=self.inverser_z, seuil_aberrants=self.seuil_aberrants,
-                                           exclusions_manuelles=self.exclusions_manuelles)
+        self.deformation = d = self._deformation()
         if not d._complet(d.dossier_entree):
             raise FileNotFoundError(f"X3d.txt, Y3d.txt, Z3d.txt introuvables dans {d.dossier_entree}")
         X, Y, Z = d.charger()
@@ -240,14 +343,22 @@ class PressionUz:
               f"Uz max {'= maximum' if self.centile >= 100 else f'= centile {self.centile:g}'} : "
               f"de {np.nanmin(uz_max):.3g} à {np.nanmax(uz_max):.3g} mm")
 
+        self.centre, E = self.deformation_centre(d)
+        print(f"E à la tache {self.indice_point}{' (automatique)' if self.point_centre is None else ''}, "
+              f"nœud de grille x = {self.centre[0]:.4g} mm, y = {self.centre[1]:.4g} mm ; "
+              f"Exx de {np.nanmin(E[:, 0]):.3g} à {np.nanmax(E[:, 0]):.3g}")
+
         self.resultats = {"image": numeros, "temps": temps, "pression": pression, "uz_max": uz_max,
-                          "ecart_mesure": ecart}
+                          "ecart_mesure": ecart, "Exx": E[:, 0], "Eyy": E[:, 1], "Ezz": E[:, 2]}
         if self.enregistrer_resultats or self.enregistrer_figures:
             self.dossier_sortie.mkdir(parents=True, exist_ok=True)
         if self.enregistrer_resultats:
             np.savetxt(self.dossier_sortie / "pression_uz.txt",
-                       np.column_stack((numeros, temps, pression, uz_max)), fmt=["%d", "%.6g", "%.6g", "%.6g"],
-                       header=f"image temps_s pression_{self.unite_pression} uz_max_mm")
+                       np.column_stack((numeros, temps, pression, uz_max, E)),
+                       fmt=["%d", "%.6g", "%.6g", "%.6g", "%.6g", "%.6g", "%.6g"],
+                       header=f"image temps_s pression_{self.unite_pression} uz_max_mm "
+                              f"Exx Eyy Ezz (tache {self.indice_point} : x={self.centre[0]:.4g} "
+                              f"y={self.centre[1]:.4g} mm)")
             print(f"Tableau enregistré : {self.dossier_sortie / 'pression_uz.txt'}")
         if self.enregistrer_figures or self.afficher_figures:
             self.tracer()
@@ -267,22 +378,33 @@ class PressionUz:
         ok = np.isfinite(r["uz_max"]) & np.isfinite(r["pression"])
         quoi = "Uz max" if self.centile >= 100 else f"Uz (centile {self.centile:g})"
         fig, ax = plt.subplots(figsize=(9, 6), layout="constrained")
-        ax.plot(r["uz_max"][ok], r["pression"][ok], "o-", ms=3, label=self.source)
-        ax.set_xlabel(f"{quoi} (mm)"); ax.set_ylabel(f"Pression ({self.unite_pression})")
+        ax.plot(r["pression"][ok], r["uz_max"][ok], "o-", ms=3, label=self.source)
+        ax.set_ylabel(f"{quoi} (mm)"); ax.set_xlabel(f"Pression ({self.unite_pression})")
         ax.set_title(f"{Path(self.dossier_essai).name} - {self.source}")
         ax.grid(alpha=0.3); ax.legend(fontsize=10)
-        self._finir_figure(fig, "Pression_Uz.png")
+        self._finir_figure(fig, "Pression_Uz.svg")
 
-        if self.tracer_temps:
-            ok_t = np.isfinite(r["temps"])
-            fig, ax1 = plt.subplots(figsize=(9, 6), layout="constrained")
-            l1 = ax1.plot(r["temps"][ok_t], r["pression"][ok_t], "o-", ms=3, c="tab:blue",
-                          label=f"Pression ({self.unite_pression})")
-            ax1.set_xlabel("temps (s)"); ax1.set_ylabel(f"Pression ({self.unite_pression})")
-            ax2 = ax1.twinx()
-            l2 = ax2.plot(r["temps"][ok_t], r["uz_max"][ok_t], "s-", ms=3, c="tab:orange", label=f"{quoi} (mm)")
-            ax2.set_ylabel(f"{quoi} (mm)")
-            ax1.legend(l1 + l2, [l.get_label() for l in l1 + l2], loc="best")
-            ax1.set_title(f"{Path(self.dossier_essai).name} - {self.source} : pression et {quoi} au cours du temps")
-            ax1.grid(alpha=0.3)
-            self._finir_figure(fig, "Pression_Uz_temps.png")
+        ok_t = np.isfinite(r["temps"])
+        fig, ax1 = plt.subplots(figsize=(9, 6), layout="constrained")
+        l1 = ax1.plot(r["temps"][ok_t], r["pression"][ok_t], "o-", ms=3, c="tab:blue",
+                      label=f"Pression ({self.unite_pression})")
+        ax1.set_xlabel("temps (s)"); ax1.set_ylabel(f"Pression ({self.unite_pression})")
+        ax2 = ax1.twinx()
+        l2 = ax2.plot(r["temps"][ok_t], r["uz_max"][ok_t], "s-", ms=3, c="tab:orange", label=f"{quoi} (mm)")
+        ax2.set_ylabel(f"{quoi} (mm)")
+        ax1.legend(l1 + l2, [l.get_label() for l in l1 + l2], loc="best")
+        ax1.set_title(f"{Path(self.dossier_essai).name} - {self.source} : pression et {quoi} au cours du temps")
+        ax1.grid(alpha=0.3)
+        self._finir_figure(fig, "Pression_Uz_temps.svg")
+
+        # pression = f(E) au point central du dôme
+        fig, ax = plt.subplots(figsize=(9, 6), layout="constrained")
+        for nom, couleur in (("Exx", "tab:blue"), ("Eyy", "tab:orange"), ("Ezz", "tab:green")):
+            ok_e = np.isfinite(r[nom]) & np.isfinite(r["pression"])
+            ax.plot(r[nom][ok_e], r["pression"][ok_e], "o-", ms=3, c=couleur, label=nom)
+        ax.set_xlabel("Déformation de Green-Lagrange E (au point de mesure)")
+        ax.set_ylabel(f"Pression ({self.unite_pression})")
+        ax.set_title(f"{Path(self.dossier_essai).name} - {self.source} : pression = f(E), tache {self.indice_point} "
+                     f"(x = {self.centre[0]:.3g} mm, y = {self.centre[1]:.3g} mm)")
+        ax.grid(alpha=0.3); ax.legend(fontsize=10)
+        self._finir_figure(fig, "Pression_E_centre.svg")

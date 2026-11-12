@@ -1,4 +1,5 @@
-"""Interface tkinter de PressionUz : courbe pression = f(Uz max).
+"""Interface tkinter de PressionUz : courbes Uz max = f(pression), pression et Uz max = f(temps),
+pression = f(E au point de mesure, choisi sur la photo).
 
 Usage depuis un script placé à côté du dossier Pycaso/ :
     from Pycaso.pression_gui import run_pression_gui
@@ -13,6 +14,7 @@ from pathlib import Path
 from tkinter import ttk, messagebox, filedialog
 
 from Pycaso.deformation_class import Deformation
+from Pycaso.pression_selection_point import choisir_point
 from Pycaso.pression_class import PressionUz, temps_image
 from Pycaso.reconstruction_class import Detect3D
 from Pycaso.style_gui import Style
@@ -65,15 +67,15 @@ class PressionGUI:
 
     CASES = [
         ("exclusions_manuelles", "Retirer les taches exclues à la main (outil de retouche)"),
-        ("tracer_temps", "Tracer aussi pression et Uz max en fonction du temps"),
         ("enregistrer_resultats", "Enregistrer le tableau (pression_uz.txt)"),
-        ("enregistrer_figures", "Enregistrer les figures (.png dans <essai>/pression/<source>)"),
+        ("enregistrer_figures", "Enregistrer les figures (.svg dans <essai>/pression/<source>)"),
         ("afficher_figures", "Afficher les figures à la fin"),
     ]
     SENS = {"auto (dôme vers le haut)": None, "inverser": True, "garder": False}
     SEPARATEURS = {"virgule": ",", "point-virgule": ";", "tabulation": "\t", "espaces": ""}
     INTERPOLATIONS = {"linéaire (entre les 2 mesures qui encadrent)": "lineaire", "mesure la plus proche": "proche"}
     PAD = _PAD
+    coord_point = None                 # {"indice", "x", "y", "auto"} du point choisi à la main, sinon None
 
     def __init__(self):
         self.result = None
@@ -98,12 +100,16 @@ class PressionGUI:
             "reference_deplacement": tk.StringVar(value=str(p.reference_deplacement)),
             "centile": tk.StringVar(value=f"{p.centile:g}"),
             "sens_z": tk.StringVar(value=next(k for k, v in self.SENS.items() if v == p.inverser_z)),
-            "seuil_aberrants": tk.StringVar(value=f"{p.seuil_aberrants:g}"),
+            "point_centre": tk.StringVar(value="" if p.point_centre is None else str(p.point_centre)),
+            "taille_grille": tk.StringVar(value=str(p.taille_grille)),
+            "interpolation_deformation": tk.StringVar(value=p.interpolation_deformation),
         }
         for nom, _ in self.CASES:
             self.v[nom] = tk.BooleanVar(value=bool(getattr(p, nom)))
         self._construire()
         self._fichier_auto = self.v["fichier_pression"].get()
+        for k in ("dossier_essai", "source"):          # un autre essai / une autre reconstruction : point automatique
+            self.v[k].trace_add("write", self._reinit_point)
         self.v["dossier_essai"].trace_add("write", self._suivre_essai)
         self.v["dossier_essai"].trace_add("write", self._maj_sources)
         for k in ("source", "fichier_pression", "colonne_temps", "colonne_pression", "separateur", "lignes_entete",
@@ -187,16 +193,26 @@ class PressionGUI:
                     "100 = maximum ; 99 ou 99.5 = moins sensible à une tache isolée")
         self._ligne(f, 2, "Sens de z", ttk.Combobox(f, textvariable=self.v["sens_z"], state="readonly",
                                                      values=list(self.SENS), width=24))
-        self._ligne(f, 3, "Seuil des aberrants (mm)", ttk.Entry(f, textvariable=self.v["seuil_aberrants"], width=10),
-                    "comme la déformation ; 0 = aucun filtre")
+
+        # --- Déformation au centre ---
+        f = self._bloc("Déformation au centre du dôme (E de Green-Lagrange)", 3)
+        self._ligne(f, 0, "Taille de la grille", ttk.Entry(f, textvariable=self.v["taille_grille"], width=10),
+                    "points par côté ; E est lu au nœud le plus proche du point choisi")
+        self._ligne(f, 1, "Interpolation", ttk.Combobox(f, textvariable=self.v["interpolation_deformation"],
+                                                         state="readonly", values=list(Deformation.INTERPOLATIONS),
+                                                         width=14),
+                    "comme la déformation (fonction radiale par défaut)")
+        self.lbl_point = self._ligne(f, 2, "Point de mesure",
+                                     ttk.Button(f, text="Choisir sur la photo…", command=self._choisir_point), "")
+        self._maj_point()
 
         # --- Résultats ---
-        f = self._bloc("Résultats", 3)
+        f = self._bloc("Résultats", 4)
         for i, (nom, lib) in enumerate(self.CASES):
             ttk.Checkbutton(f, text=lib, variable=self.v[nom]).grid(row=i, column=0, columnspan=3, sticky="w", **pad)
 
         fb = ttk.Frame(self.root)
-        fb.grid(row=4, column=0, sticky="e", **pad)
+        fb.grid(row=5, column=0, sticky="e", **pad)
         ttk.Button(fb, text="Annuler", command=self.root.destroy).grid(row=0, column=0, **pad)
         ttk.Button(fb, text="Lancer", command=self._on_ok).grid(row=0, column=1, **pad)
         self.root.bind("<Return>", lambda _e: self._on_ok())
@@ -225,6 +241,37 @@ class PressionGUI:
             except ValueError:                 # Windows : autre lecteur que le dossier d'exécution
                 rel = ".."
             self.v["fichier_pression"].set(f if rel.startswith("..") else rel)
+
+    # ----- point de mesure -----
+
+    def _maj_point(self, *_):
+        txt = self.v["point_centre"].get().strip()
+        if not txt:
+            texte = "automatique : tache la plus proche du centre de la zone initiale"
+        else:
+            c = self.coord_point
+            texte = f"tache {txt}" + (f" (x = {c['x']:.4g} mm, y = {c['y']:.4g} mm)" if c else "")
+        self.lbl_point.configure(text=texte)
+
+    def _reinit_point(self, *_):
+        self.coord_point = None
+        self.v["point_centre"].set("")
+        self._maj_point()
+
+    def _choisir_point(self):
+        erreurs = []
+        if not (self._courant().dossier_source / "X3d.txt").is_file():
+            erreurs.append("Aucune reconstruction choisie")
+        if erreurs:
+            messagebox.showerror("Choix du point", "\n".join(erreurs), parent=self.root)
+            return
+        txt = self.v["point_centre"].get().strip()
+        res = choisir_point(self.root, p, int(txt) if txt else None)
+        if res is None:
+            return
+        self.coord_point = None if res["auto"] else res
+        self.v["point_centre"].set("" if res["auto"] else str(res["indice"]))
+        self._maj_point()
 
     def _courant(self, **kw):
         sep = self.SEPARATEURS.get(self.v["separateur"].get(), ",")
@@ -314,8 +361,8 @@ class PressionGUI:
         le = self._nombre("lignes_entete", "Lignes d'en-tête", erreurs, int, 0)
         ref = self._nombre("reference_deplacement", "Image de référence", erreurs, int)
         centile = self._nombre("centile", "Centile", erreurs, float, 50, 100, defaut=100.0)
-        seuil = self._nombre("seuil_aberrants", "Seuil des aberrants", erreurs, float, 0, defaut=2.0)
         decalage = self._nombre("decalage_temps", "Décalage des horloges", erreurs, float, defaut=0.0)
+        taille = self._nombre("taille_grille", "Taille de la grille", erreurs, int, 10, defaut=100)
         p = self._courant()
         if not (p.dossier_source / "X3d.txt").is_file():
             erreurs.append("Aucune reconstruction choisie")
@@ -339,7 +386,11 @@ class PressionGUI:
                                  decalage_temps=decalage,
                                  interpolation=self.INTERPOLATIONS[self.v["interpolation"].get()],
                                  reference_deplacement=ref, centile=centile,
-                                 inverser_z=self.SENS[self.v["sens_z"].get()], seuil_aberrants=seuil,
+                                 inverser_z=self.SENS[self.v["sens_z"].get()], 
+                                 point_centre=int(self.v["point_centre"].get()) if self.v["point_centre"].get().strip()
+                                 else None,
+                                 taille_grille=taille,
+                                 interpolation_deformation=self.v["interpolation_deformation"].get(),
                                  **{nom: self.v[nom].get() for nom, _ in self.CASES})
         self.root.destroy()
 
