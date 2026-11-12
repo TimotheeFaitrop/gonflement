@@ -203,7 +203,7 @@ class Detect3DGUI:
             "z_bleu": tk.StringVar(value=f"{defaut.z_bleu:g}"),
             "z_jaune": tk.StringVar(value=f"{defaut.z_jaune:g}"),
             "z_max": tk.StringVar(value=f"{defaut.z_max:g}"),
-            "etat_plat": tk.BooleanVar(value=bool(defaut.etat_plat)),
+            "sans_etat_plat": tk.BooleanVar(value=False),     # coché : on utilise Lp_final au lieu de Lp_final_corrigé
             "affichage_z": tk.StringVar(value=defaut.affichage_z),
         }
         for nom, _ in self.CASES:
@@ -225,8 +225,8 @@ class Detect3DGUI:
         ligne.grid(row=1, column=1, columnspan=2, sticky="w", **pad)
         ttk.Entry(ligne, textvariable=self.v["dossier_essai"], width=60).grid(row=0, column=0)
         ttk.Button(ligne, text="…", width=3, command=self._parcourir).grid(row=0, column=1, padx=(4, 0))
-        self.case_plat = ttk.Checkbutton(f, text="Utiliser l'état initial à partir des photos non flambées",
-                                         variable=self.v["etat_plat"], command=self._maj)
+        self.case_plat = ttk.Checkbutton(f, text="Reconstruction sans état plat initial",
+                                         variable=self.v["sans_etat_plat"], command=self._maj)
         self.case_plat.grid(row=2, column=0, columnspan=3, sticky="w", **pad)
         lz = ttk.Frame(f)
         lz.grid(row=3, column=0, columnspan=3, sticky="w", **pad)
@@ -316,10 +316,14 @@ class Detect3DGUI:
 
     # ----- vérifications en direct -----
 
+    def _etat_plat(self):
+        """True : on utilise l'état plat (Lp_final corrigé) ; False : case « sans état plat initial » cochée (Lp_final)."""
+        return not self.v["sans_etat_plat"].get()
+
     def _courant(self, degre=None):
         """Detect3D portant le dossier et la méthode saisis (pour les chemins)."""
         return Detect3D(dossier_essai=self.v["dossier_essai"].get().strip() or None, dossier_calib=self.dossier_calib,
-                        methode=self.v["methode"].get(), degre=degre, etat_plat=self.v["etat_plat"].get())
+                        methode=self.v["methode"].get(), degre=degre, etat_plat=self._etat_plat())
 
     def _maj_degres(self, *_):
         """Quand la méthode change : liste des degrés étalonnés et degré proposé."""
@@ -338,8 +342,6 @@ class Detect3DGUI:
         except ValueError:
             degre = None
         essai = self._courant(degre)
-        corrige = essai.dossier_entree / Detect3D.FICHIER_LP_CORRIGE
-        self.case_plat.state(["!disabled"] if corrige.is_file() or essai.etat_plat else ["disabled"])
         nom = essai.fichier_Lp.name
 
         infos = essai.infos_Lp()
@@ -348,9 +350,13 @@ class Detect3DGUI:
             self.lbl_Lp.configure(text=f"✔ {nom} : {infos[0]} images, {infos[1]} points "
                                        f"(dans {essai.dossier_entree}){plat}", foreground=self.VERT)
         else:
-            avant = "la correction par l'état plat" if essai.etat_plat else "la détection des taches"
+            if essai.etat_plat:
+                conseil = ("lancer d'abord la correction par l'état plat, "
+                           "ou cocher « reconstruction sans état plat initial »")
+            else:
+                conseil = "lancer d'abord la détection des taches"
             self.lbl_Lp.configure(text=f"✘ {nom} introuvable dans {essai.dossier_entree} : "
-                                       f"lancer d'abord {avant}", foreground=self.ROUGE)
+                                       f"{conseil}", foreground=self.ROUGE)
         self.lbl_sortie.configure(text=f"Résultats dans : {essai.dossier_sortie}")
 
         degres = essai.degres_disponibles()
@@ -402,7 +408,7 @@ class Detect3DGUI:
                 hors = [n for n in images if not (premiere <= n < nb or -(nb - premiere) <= n < 0)]
                 if hors:
                     erreurs.append(f"Images à tracer hors limites : {hors} (images {premiere} à {nb - 1}"
-                                   + ("" if plat else " ; l'image 0, état plat, demande « État plat »") + ")")
+                                   + ("" if plat else " ; l'image 0, état plat, n'existe pas sans état plat initial") + ")")
             if essai.dossier_constantes() is None:
                 erreurs.append(f"Étalonnage {essai.methode} {essai.tag} introuvable : "
                                "il est nécessaire pour la reconstruction 3D")
@@ -414,7 +420,7 @@ class Detect3DGUI:
                                methode=self.v["methode"].get(), degre=degre,
                                images_a_tracer=images,
                                couleurs_fixes=self.v["couleurs_fixes"].get(),
-                               etat_plat=self.v["etat_plat"].get(),
+                               etat_plat=self._etat_plat(),
                                affichage_z=self.v["affichage_z"].get(),
                                **echelle,
                                **{nom: self.v[nom].get() for nom, _ in self.CASES})
