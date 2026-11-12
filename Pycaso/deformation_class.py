@@ -12,6 +12,8 @@ construite sur la configuration initiale (image 0) ; on en déduit, pour chaque 
     H    Hencky lagrangien ½ ln(FᵀF)
     LE   Hencky eulérien ½ ln(FFᵀ)                   (« LE » d'Abaqus)
     I1, I2  invariants de C
+    K2   norme de la partie déviatorique de H : sqrt(dev(H) : dev(H)), dev(H) = H − tr(H)/3 I
+    K3   3 sqrt(6) det(dev(H)) / K2³   (−1 ≤ K3 ≤ 1 : type de sollicitation)
 
 Organisation des dossiers (dossier_essai = ex. Expériences/<date>/essai1) :
     <essai>/reconstruction/<source>/   X3d.txt, Y3d.txt, Z3d.txt (entrée, source = Lpform_4, nZ_12...)
@@ -43,9 +45,15 @@ class Deformation:
         "J":  ("Rapport de surfaces J = det U1", "scalaire"),
         "I1": ("Premier invariant I1 = tr C", "scalaire"),
         "I2": ("Second invariant I2", "scalaire"),
+        "K2": ("Invariant K2 = sqrt(dev(H):dev(H))", "scalaire"),
+        "K3": ("Invariant K3 = 3√6 det(dev(H)) / K2³", "scalaire"),
     }
     COMPOSANTES = {"xx": (0, 0), "yy": (1, 1), "zz": (2, 2),
-                   "xy": (0, 1), "xz": (0, 2), "yz": (1, 2)}
+                   "xy": (0, 1), "xz": (0, 2), "yz": (1, 2),
+                   "yx": (1, 0), "zx": (2, 0), "zy": (2, 1)}
+    # yx, zx, zy : utiles seulement pour F (non symétrique) ; ignorées pour les tenseurs symétriques
+    NON_SYMETRIQUES = ("yx", "zx", "zy")
+    TENSEURS_NON_SYMETRIQUES = ("F",)
     # interpolation : fonctions de base radiale proposées (la première est la valeur par défaut)
     #   rbf          : scipy Rbf, comme getdef.py ; ne reproduit pas exactement un champ linéaire
     #   rbf_polynome : RBFInterpolator + polynôme de degré 1 : plus précis, option voisins pour la vitesse
@@ -78,8 +86,6 @@ class Deformation:
                  rayon_masque=1.0,          # rayon du disque / demi-largeur de la zone initiale
                  inverser_z=None,           # changer le signe de Z : None = auto (dôme vers le haut), True / False
                  exclusions_manuelles=True, # retirer les taches exclues à la main (retouche_gui)
-                 seuil_aberrants=2.0,       # tache écartée si son déplacement s'écarte de plus de ce seuil (mm)
-                                            # de la médiane de ses voisines ; 0 = pas de filtre
                  # --- Images et figures ---
                  images=(-1,),              # indices des images traitées (-1 = dernière)
                  grandeurs=("F",),          # grandeurs tracées (clés de GRANDEURS)
@@ -119,7 +125,6 @@ class Deformation:
         self.masque = masque
         self.rayon_masque = rayon_masque
         self.inverser_z = inverser_z
-        self.seuil_aberrants = seuil_aberrants
         self.exclusions_manuelles = exclusions_manuelles
         self.images = tuple(images)
         self.grandeurs = tuple(grandeurs)
@@ -131,8 +136,7 @@ class Deformation:
         self.enregistrer_figures = enregistrer_figures
         self.afficher_figures = afficher_figures
 
-    RESULTATS = ("X", "Y", "Z", "grille", "champs", "z_inverse", "aberrants", "_r_ref")
-    VOISINES_ABERRANTS = 8          # nombre de taches voisines pour la médiane du filtre
+    RESULTATS = ("X", "Y", "Z", "grille", "champs", "z_inverse",  "_r_ref")
 
     def parametres(self):
         """Paramètres sous forme de dictionnaire (pour affichage)."""
@@ -230,7 +234,6 @@ class Deformation:
             n = ExclusionsTaches(self.dossier_essai, self.source).appliquer(self.X, self.Y, self.Z)
             if n:
                 print(f"Exclusions manuelles : {n} tache(s) retirée(s)")
-        self.filtrer_aberrants()
         inverse = self.inverser_z
         if inverse is None:
             dz = self.Z - self.Z[0]
@@ -240,47 +243,7 @@ class Deformation:
         self.z_inverse = inverse
         return self.X, self.Y, self.Z
 
-    def filtrer_aberrants(self):
-        """Met à NaN les taches aberrantes (souvent dues à Lagrange hors du volume étalonné).
-
-        Image 0 : tache écartée de toutes les images si son z s'écarte de plus de seuil_aberrants
-        de la médiane des z de ses voisines. Autres images : tache écartée de cette image si son
-        déplacement 3D s'écarte de plus de seuil_aberrants de la médiane des déplacements voisins.
-        Les voisines sont les VOISINES_ABERRANTS taches les plus proches dans l'image 0.
-        Renvoie (nb de taches écartées partout, nb total de (tache, image) écartés).
-        """
-        self.aberrants = (0, 0)
-        if not self.seuil_aberrants:
-            return self.aberrants
-        from scipy.spatial import cKDTree
-        X0, Y0, Z0 = self.X[0], self.Y[0], self.Z[0]
-        idx = np.nonzero(np.isfinite(X0) & np.isfinite(Y0) & np.isfinite(Z0))[0]
-        k = min(self.VOISINES_ABERRANTS, len(idx) - 1)
-        if k < 3:
-            return self.aberrants
-        _, nn = cKDTree(np.column_stack((X0[idx], Y0[idx]))).query(
-            np.column_stack((X0[idx], Y0[idx])), k=k + 1)
-        nn = nn[:, 1:]                                   # sans la tache elle-même
-
-        def ecart(v):                                    # v : (taches, composantes)
-            with np.errstate(invalid="ignore"), warnings.catch_warnings():
-                warnings.simplefilter("ignore", RuntimeWarning)     # voisines toutes NaN
-                return np.linalg.norm(v - np.nanmedian(v[nn], axis=1), axis=-1)
-
-        mauvais0 = idx[ecart(Z0[idx, None]) > self.seuil_aberrants]
-        self.X[:, mauvais0] = self.Y[:, mauvais0] = self.Z[:, mauvais0] = np.nan
-        total = len(mauvais0) * len(self.X)
-        for i in range(1, len(self.X)):
-            u = np.column_stack((self.X[i, idx] - X0[idx], self.Y[i, idx] - Y0[idx], self.Z[i, idx] - Z0[idx]))
-            mauvais = idx[ecart(u) > self.seuil_aberrants]
-            self.X[i, mauvais] = self.Y[i, mauvais] = self.Z[i, mauvais] = np.nan
-            total += len(mauvais)
-        self.aberrants = (len(mauvais0), total)
-        if total:
-            print(f"Filtre des aberrants (seuil {self.seuil_aberrants:g} mm) : {len(mauvais0)} tache(s) "
-                  f"écartée(s) dès l'image 0, {total - len(mauvais0) * len(self.X)} autre(s) "
-                  f"(tache, image) écartée(s)")
-        return self.aberrants
+    
 
     # ----- grille -----
 
@@ -364,17 +327,25 @@ class Deformation:
 
         Ft = np.swapaxes(F, -1, -2)
         C = Ft @ F
+        H = 0.5 * self._log_sym(C)
+        # invariants de la partie déviatorique de H
+        dev = H - (np.trace(H, axis1=-2, axis2=-1) / 3)[..., None, None] * I
+        K2 = np.sqrt(np.sum(dev * dev, axis=(-2, -1)))
+        with np.errstate(invalid="ignore", divide="ignore"):
+            K3 = 3 * np.sqrt(6) * np.linalg.det(dev) / K2 ** 3
         champs = {
             "U": r - r0,
             "F": F,
             "C": C,
             "E": 0.5 * (C - I),
-            "H": 0.5 * self._log_sym(C),
+            "H": H,
             "LE": 0.5 * self._log_sym(F @ Ft),
             "J": J,
             "I1": np.trace(C, axis1=-2, axis2=-1),
             "I2": 0.5 * (np.trace(C, axis1=-2, axis2=-1) ** 2
                          - np.trace(C @ C, axis1=-2, axis2=-1)),
+            "K2": K2,
+            "K3": K3,
         }
         for v in champs.values():
             v[invalide] = np.nan
@@ -397,8 +368,10 @@ class Deformation:
         champ = self.champs[num][grandeur]
         titre, nature = self.GRANDEURS[grandeur]
         if nature == "tenseur":
+            sym = grandeur not in self.TENSEURS_NON_SYMETRIQUES      # yx, zx, zy = xy, xz, yz
             vignettes = [(f"{grandeur} {c}", champ[..., i, j])
-                         for c, (i, j) in self.COMPOSANTES.items() if c in self.composantes]
+                         for c, (i, j) in self.COMPOSANTES.items()
+                         if c in self.composantes and not (sym and c in self.NON_SYMETRIQUES)]
         elif nature == "vecteur":
             vignettes = [(f"{grandeur}{c}", champ[..., k]) for k, c in enumerate("xyz")]
         else:

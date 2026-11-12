@@ -203,7 +203,6 @@ class DeformationGUI:
             "voisins": tk.StringVar(value=str(d.voisins)),
             "masque": tk.StringVar(value=d.masque),
             "rayon_masque": tk.StringVar(value=f"{d.rayon_masque:g}"),
-            "seuil_aberrants": tk.StringVar(value=f"{d.seuil_aberrants:g}"),
             "reference_deplacement": tk.StringVar(value=str(d.reference_deplacement)),
             "images": tk.StringVar(value=_ecrire_images(d.images)),
             "sens_z": tk.StringVar(value=next(l for l, v in self.SENS.items() if v == d.inverser_z)),
@@ -282,9 +281,6 @@ class DeformationGUI:
         ttk.Label(lm, text="× demi-largeur de la zone initiale (disque) ; hors masque : NaN",
                   foreground=_GRIS).grid(row=0, column=2, padx=(8, 0))
 
-        ttk.Label(f, text="Seuil des aberrants (mm)").grid(row=5, column=0, sticky="w", **pad)
-        ttk.Entry(f, textvariable=self.v["seuil_aberrants"], width=16).grid(row=5, column=1, sticky="w", **pad)
-        self._aide(f, "tache écartée si son déplacement s'écarte de plus de ce seuil de ses voisines ; 0 = aucun filtre", 5)
         ttk.Label(f, text="Déplacements / image").grid(row=6, column=0, sticky="w", **pad)
         ttk.Entry(f, textvariable=self.v["reference_deplacement"], width=16).grid(row=6, column=1, sticky="w", **pad)
         self.lbl_reference = self._aide(f, "", 6)
@@ -306,16 +302,24 @@ class DeformationGUI:
         ttk.Label(f, text="Grandeurs tracées").grid(row=1, column=0, sticky="nw", **pad)
         lg = ttk.Frame(f)
         lg.grid(row=1, column=1, columnspan=2, sticky="w", **pad)
-        for k, (g, (titre, _)) in enumerate(Deformation.GRANDEURS.items()):
+        ligne_g, col_g = 0, 0
+        for g, (titre, _) in Deformation.GRANDEURS.items():
+            if g == "I1" and col_g:                  # retour à la ligne avant les invariants
+                ligne_g, col_g = ligne_g + 1, 0
             ttk.Checkbutton(lg, text=f"{g}  –  {titre}", variable=self.v_grandeurs[g]).grid(
-                row=k // 2, column=k % 2, sticky="w", padx=(0, 16), pady=1)
+                row=ligne_g, column=col_g, sticky="w", padx=(0, 16), pady=1)
+            col_g += 1
+            if col_g == 2:
+                ligne_g, col_g = ligne_g + 1, 0
 
         ttk.Label(f, text="Composantes").grid(row=2, column=0, sticky="w", **pad)
         lc = ttk.Frame(f)
         lc.grid(row=2, column=1, columnspan=2, sticky="w", **pad)
         for k, c in enumerate(Deformation.COMPOSANTES):
-            ttk.Checkbutton(lc, text=c, variable=self.v_composantes[c]).grid(row=0, column=k, padx=(0, 10))
-        ttk.Label(lc, text="(des tenseurs ; U trace x, y, z)", foreground=_GRIS).grid(row=0, column=6)
+            ttk.Checkbutton(lc, text=c, variable=self.v_composantes[c]).grid(
+                row=k // 6, column=k % 6, sticky="w", padx=(0, 10))
+        ttk.Label(lc, text="(des tenseurs ; yx, zx, zy : seulement pour F, non symétrique ; U trace x, y, z)",
+                  foreground=_GRIS).grid(row=0, column=6, sticky="w")
 
         for i, (nom, lib) in enumerate(self.CASES, start=3):
             ttk.Checkbutton(f, text=lib, variable=self.v[nom]).grid(row=i, column=0, columnspan=3,
@@ -413,7 +417,6 @@ class DeformationGUI:
         lissage = self._nombre("lissage", "Lissage", erreurs, float, 0)
         voisins = self._nombre("voisins", "Voisins", erreurs, int, 0)
         rayon = self._nombre("rayon_masque", "Rayon du masque", erreurs, float, 0, strict=True, defaut=1.0)
-        seuil_ab = self._nombre("seuil_aberrants", "Seuil des aberrants", erreurs, float, 0)
         ref = self._nombre("reference_deplacement", "Image de référence des déplacements", erreurs, int)
         if self.v["interpolation"].get() == "rbf_polynome" and 0 < voisins < 10:
             erreurs.append("Voisins : 0 (toutes les taches) ou au moins 10")
@@ -450,7 +453,7 @@ class DeformationGUI:
                                   fonction_rbf=self.v["fonction_rbf"].get() or None,
                                   lissage=lissage, voisins=voisins,
                                   masque=self.v["masque"].get(), rayon_masque=rayon,
-                                  seuil_aberrants=seuil_ab, reference_deplacement=ref,
+                                  reference_deplacement=ref,
                                   inverser_z=self.SENS[self.v["sens_z"].get()],
                                   images=images, grandeurs=grandeurs, composantes=composantes,
                                   **{nom: self.v[nom].get() for nom, _ in self.CASES})
