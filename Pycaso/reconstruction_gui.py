@@ -203,8 +203,11 @@ class Detect3DGUI:
             "z_bleu": tk.StringVar(value=f"{defaut.z_bleu:g}"),
             "z_jaune": tk.StringVar(value=f"{defaut.z_jaune:g}"),
             "z_max": tk.StringVar(value=f"{defaut.z_max:g}"),
-            "sans_etat_plat": tk.BooleanVar(value=False),     # coché : on utilise Lp_final au lieu de Lp_final_corrigé
+            "etat_plat": tk.BooleanVar(value=bool(defaut.etat_plat)),
             "affichage_z": tk.StringVar(value=defaut.affichage_z),
+            "gif_images": tk.StringVar(value=""),          # vide = toutes les images
+            "gif_fps": tk.StringVar(value="10"),
+            "gif_dpi": tk.StringVar(value="80"),
         }
         for nom, _ in self.CASES:
             self.v[nom] = tk.BooleanVar(value=bool(getattr(defaut, nom)))
@@ -225,8 +228,8 @@ class Detect3DGUI:
         ligne.grid(row=1, column=1, columnspan=2, sticky="w", **pad)
         ttk.Entry(ligne, textvariable=self.v["dossier_essai"], width=60).grid(row=0, column=0)
         ttk.Button(ligne, text="…", width=3, command=self._parcourir).grid(row=0, column=1, padx=(4, 0))
-        self.case_plat = ttk.Checkbutton(f, text="Reconstruction sans état plat initial",
-                                         variable=self.v["sans_etat_plat"], command=self._maj)
+        self.case_plat = ttk.Checkbutton(f, text="Utiliser l'état initial à partir des photos non flambées",
+                                         variable=self.v["etat_plat"], command=self._maj)
         self.case_plat.grid(row=2, column=0, columnspan=3, sticky="w", **pad)
         lz = ttk.Frame(f)
         lz.grid(row=3, column=0, columnspan=3, sticky="w", **pad)
@@ -278,9 +281,31 @@ class Detect3DGUI:
             self.champs_couleurs.append(e)
         self._maj_couleurs()
 
+        # --- GIF du gonflement ---
+        f = self._bloc("GIF du gonflement", 3)
+        ttk.Label(f, text="Images du GIF").grid(row=0, column=0, sticky="w", **pad)
+        lg = ttk.Frame(f)
+        lg.grid(row=0, column=1, columnspan=2, sticky="w", **pad)
+        ttk.Entry(lg, textvariable=self.v["gif_images"], width=30).grid(row=0, column=0)
+        ttk.Button(lg, text="Choisir…",
+                   command=lambda: self._choisir_images("gif_images")).grid(row=0, column=1, padx=(4, 8))
+        ttk.Label(lg, text="vide = toutes les images de l'essai", foreground=_GRIS).grid(row=0, column=2, sticky="w")
+        lp = ttk.Frame(f)
+        lp.grid(row=1, column=0, columnspan=3, sticky="w", **pad)
+        ttk.Label(lp, text="Images par seconde").grid(row=0, column=0, padx=(0, 4))
+        ttk.Entry(lp, textvariable=self.v["gif_fps"], width=6).grid(row=0, column=1)
+        ttk.Label(lp, text="Résolution (dpi)").grid(row=0, column=2, padx=(16, 4))
+        ttk.Entry(lp, textvariable=self.v["gif_dpi"], width=6).grid(row=0, column=3)
+        self.btn_gif = ttk.Button(f, text="Créer le GIF", command=self._creer_gif)
+        self.btn_gif.grid(row=2, column=0, sticky="w", **pad)
+        self.lbl_gif = ttk.Label(f, foreground=_GRIS, wraplength=660, justify="left",
+                                 text="Utilise les X3d/Y3d/Z3d.txt déjà reconstruits (mêmes méthode, degré et état plat que "
+                                      "ci-dessus), avec l'axe vertical, l'inversion de Z et l'échelle de couleur choisis.")
+        self.lbl_gif.grid(row=2, column=1, columnspan=2, sticky="w", **pad)
+
         # --- Boutons ---
         fb = ttk.Frame(self.root)
-        fb.grid(row=3, column=0, sticky="e", **pad)
+        fb.grid(row=4, column=0, sticky="e", **pad)
         ttk.Button(fb, text="Annuler", command=self.root.destroy).grid(row=0, column=0, **pad)
         ttk.Button(fb, text="Lancer", command=self._on_ok).grid(row=0, column=1, **pad)
         self.root.bind("<Return>", lambda _e: self._on_ok())
@@ -294,7 +319,7 @@ class Detect3DGUI:
 
     # ----- images à tracer -----
 
-    def _choisir_images(self):
+    def _choisir_images(self, cle="images_a_tracer"):
         """Cases à cocher : 0 = état plat (grisée sans la correction), 1..n = photos de l'essai."""
         essai = self._courant()
         infos = essai.infos_Lp()
@@ -306,7 +331,8 @@ class Detect3DGUI:
             nb, indisponibles = infos[0], ()
         else:
             nb, indisponibles = infos[0] + 1, (0,)        # image 0 = état plat, absente de Lp_final.npy
-        _choisir_images(self.root, nb, self.v["images_a_tracer"], "Images à tracer", indisponibles)
+        titre = "Images du GIF" if cle == "gif_images" else "Images à tracer"
+        _choisir_images(self.root, nb, self.v[cle], titre, indisponibles)
 
     # ----- chemin du dossier de mesure -----
 
@@ -316,14 +342,10 @@ class Detect3DGUI:
 
     # ----- vérifications en direct -----
 
-    def _etat_plat(self):
-        """True : on utilise l'état plat (Lp_final corrigé) ; False : case « sans état plat initial » cochée (Lp_final)."""
-        return not self.v["sans_etat_plat"].get()
-
     def _courant(self, degre=None):
         """Detect3D portant le dossier et la méthode saisis (pour les chemins)."""
         return Detect3D(dossier_essai=self.v["dossier_essai"].get().strip() or None, dossier_calib=self.dossier_calib,
-                        methode=self.v["methode"].get(), degre=degre, etat_plat=self._etat_plat())
+                        methode=self.v["methode"].get(), degre=degre, etat_plat=self.v["etat_plat"].get())
 
     def _maj_degres(self, *_):
         """Quand la méthode change : liste des degrés étalonnés et degré proposé."""
@@ -342,6 +364,8 @@ class Detect3DGUI:
         except ValueError:
             degre = None
         essai = self._courant(degre)
+        corrige = essai.dossier_entree / Detect3D.FICHIER_LP_CORRIGE
+        self.case_plat.state(["!disabled"] if corrige.is_file() or essai.etat_plat else ["disabled"])
         nom = essai.fichier_Lp.name
 
         infos = essai.infos_Lp()
@@ -350,13 +374,9 @@ class Detect3DGUI:
             self.lbl_Lp.configure(text=f"✔ {nom} : {infos[0]} images, {infos[1]} points "
                                        f"(dans {essai.dossier_entree}){plat}", foreground=self.VERT)
         else:
-            if essai.etat_plat:
-                conseil = ("lancer d'abord la correction par l'état plat, "
-                           "ou cocher « reconstruction sans état plat initial »")
-            else:
-                conseil = "lancer d'abord la détection des taches"
+            avant = "la correction par l'état plat" if essai.etat_plat else "la détection des taches"
             self.lbl_Lp.configure(text=f"✘ {nom} introuvable dans {essai.dossier_entree} : "
-                                       f"{conseil}", foreground=self.ROUGE)
+                                       f"lancer d'abord {avant}", foreground=self.ROUGE)
         self.lbl_sortie.configure(text=f"Résultats dans : {essai.dossier_sortie}")
 
         degres = essai.degres_disponibles()
@@ -371,6 +391,69 @@ class Detect3DGUI:
             self.lbl_calib.configure(text=f"✘ aucun étalonnage {essai.methode} trouvé\n"
                                           "(Results_Calib dans le dossier mesure ou au-dessus)",
                                      foreground=self.ROUGE)
+
+    # ----- GIF -----
+
+    def _creer_gif(self):
+        """Fabrique le GIF du gonflement depuis les X3d/Y3d/Z3d.txt de l'essai (sans refaire la reconstruction)."""
+        erreurs = []
+        try:
+            degre = int(self.v["degre"].get())
+        except ValueError:
+            degre = None
+            erreurs.append("Degré : entier attendu")
+        try:
+            images = tuple(_lire_images(self.v["gif_images"].get()))
+        except ValueError:
+            images = ()
+            erreurs.append("Images du GIF : entiers ou plages a:b séparés par des virgules (ex. 1:30, -1), ou vide")
+        try:
+            fps = float(self.v["gif_fps"].get().replace(",", "."))
+            if fps <= 0:
+                raise ValueError
+        except ValueError:
+            fps = None
+            erreurs.append("Images par seconde : nombre > 0")
+        try:
+            dpi = int(self.v["gif_dpi"].get())
+            if not 30 <= dpi <= 300:
+                raise ValueError
+        except ValueError:
+            dpi = None
+            erreurs.append("Résolution : entier entre 30 et 300 dpi")
+        echelle = dict(z_min=-10.0, z_bleu=0.0, z_jaune=30.0, z_max=50.0)
+        if self.v["couleurs_fixes"].get():
+            try:
+                echelle = {k: float(self.v[k].get().replace(",", ".")) for k in echelle}
+                zs = list(echelle.values())
+                if not all(a < b for a, b in zip(zs, zs[1:])):
+                    erreurs.append("Échelle de couleur : il faut min < bleu < jaune < max")
+            except ValueError:
+                erreurs.append("Échelle de couleur : min, bleu, jaune et max doivent être des nombres")
+        if erreurs:
+            messagebox.showerror("Paramètres invalides", "\n".join(erreurs), parent=self.root)
+            return
+
+        essai = Detect3D(dossier_essai=self.v["dossier_essai"].get().strip(), dossier_calib=self.dossier_calib,
+                         methode=self.v["methode"].get(), degre=degre, etat_plat=self.v["etat_plat"].get(),
+                         affichage_z=self.v["affichage_z"].get(), inverser_z=self.v["inverser_z"].get(),
+                         couleurs_fixes=self.v["couleurs_fixes"].get(), **echelle)
+
+        def progression(k, n):
+            self.lbl_gif.configure(text=f"Création du GIF : image {k} / {n}…", foreground=_GRIS)
+            self.root.update()
+
+        self.btn_gif.configure(state="disabled")
+        try:
+            chemin = essai.gif(images=images or None, fps=fps, dpi=dpi, progression=progression)
+        except Exception as e:                                   # fichiers absents, images hors limites...
+            self.lbl_gif.configure(text="✘ GIF non créé", foreground=_ROUGE)
+            messagebox.showerror("GIF du gonflement", str(e), parent=self.root)
+        else:
+            self.lbl_gif.configure(text=f"✔ GIF enregistré : {chemin}", foreground=_VERT)
+            messagebox.showinfo("GIF du gonflement", f"GIF enregistré :\n{chemin}", parent=self.root)
+        finally:
+            self.btn_gif.configure(state="normal")
 
     # ----- validation -----
 
@@ -408,7 +491,7 @@ class Detect3DGUI:
                 hors = [n for n in images if not (premiere <= n < nb or -(nb - premiere) <= n < 0)]
                 if hors:
                     erreurs.append(f"Images à tracer hors limites : {hors} (images {premiere} à {nb - 1}"
-                                   + ("" if plat else " ; l'image 0, état plat, n'existe pas sans état plat initial") + ")")
+                                   + ("" if plat else " ; l'image 0, état plat, demande « État plat »") + ")")
             if essai.dossier_constantes() is None:
                 erreurs.append(f"Étalonnage {essai.methode} {essai.tag} introuvable : "
                                "il est nécessaire pour la reconstruction 3D")
@@ -420,7 +503,7 @@ class Detect3DGUI:
                                methode=self.v["methode"].get(), degre=degre,
                                images_a_tracer=images,
                                couleurs_fixes=self.v["couleurs_fixes"].get(),
-                               etat_plat=self._etat_plat(),
+                               etat_plat=self.v["etat_plat"].get(),
                                affichage_z=self.v["affichage_z"].get(),
                                **echelle,
                                **{nom: self.v[nom].get() for nom, _ in self.CASES})
