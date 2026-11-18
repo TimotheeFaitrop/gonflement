@@ -168,6 +168,8 @@ class Detect3DGUI:
     ]
     PAD = _PAD
     VERT, ORANGE, ROUGE = _VERT, _ORANGE, _ROUGE
+    # points de vue du GIF : nom -> (élévation, azimut) en degrés
+    VUES = {"Perspective": Detect3D.VUE_GIF, "Dessus": (90, -90), "Face": (0, -90), "Côté": (0, 0)}
 
     def __init__(self, dossier_calib=None):
         """dossier_calib : dossier d'étalonnage (results_calib) à utiliser en priorité, ou None."""
@@ -208,6 +210,8 @@ class Detect3DGUI:
             "gif_images": tk.StringVar(value=""),          # vide = toutes les images
             "gif_fps": tk.StringVar(value="10"),
             "gif_dpi": tk.StringVar(value="80"),
+            "gif_elev": tk.StringVar(value=f"{Detect3D.VUE_GIF[0]:g}"),     # point de vue du GIF (°)
+            "gif_azim": tk.StringVar(value=f"{Detect3D.VUE_GIF[1]:g}"),
         }
         for nom, _ in self.CASES:
             self.v[nom] = tk.BooleanVar(value=bool(getattr(defaut, nom)))
@@ -282,26 +286,40 @@ class Detect3DGUI:
         self._maj_couleurs()
 
         # --- GIF du gonflement ---
-        f = self._bloc("GIF du gonflement (fonctionne seulement après avoir fait une reconstruction)", 3)
-        ttk.Label(f, text="Images du GIF").grid(row=0, column=0, sticky="w", **pad)
+        f = self._bloc("GIF du gonflement", 3)
+        self.lbl_recon = ttk.Label(f, wraplength=760, justify="left")     # ✔ / ✘ reconstruction faite
+        self.lbl_recon.grid(row=0, column=0, columnspan=3, sticky="w", **pad)
+        ttk.Label(f, text="Images du GIF").grid(row=1, column=0, sticky="w", **pad)
         lg = ttk.Frame(f)
-        lg.grid(row=0, column=1, columnspan=2, sticky="w", **pad)
+        lg.grid(row=1, column=1, columnspan=2, sticky="w", **pad)
         ttk.Entry(lg, textvariable=self.v["gif_images"], width=30).grid(row=0, column=0)
         ttk.Button(lg, text="Choisir…",
                    command=lambda: self._choisir_images("gif_images")).grid(row=0, column=1, padx=(4, 8))
         ttk.Label(lg, text="vide = toutes les images de l'essai", foreground=_GRIS).grid(row=0, column=2, sticky="w")
         lp = ttk.Frame(f)
-        lp.grid(row=1, column=0, columnspan=3, sticky="w", **pad)
+        lp.grid(row=2, column=0, columnspan=3, sticky="w", **pad)
         ttk.Label(lp, text="Images par seconde").grid(row=0, column=0, padx=(0, 4))
         ttk.Entry(lp, textvariable=self.v["gif_fps"], width=6).grid(row=0, column=1)
         ttk.Label(lp, text="Résolution (dpi)").grid(row=0, column=2, padx=(16, 4))
         ttk.Entry(lp, textvariable=self.v["gif_dpi"], width=6).grid(row=0, column=3)
+        ttk.Label(f, text="Point de vue").grid(row=3, column=0, sticky="w", **pad)
+        lv = ttk.Frame(f)
+        lv.grid(row=3, column=1, columnspan=2, sticky="w", **pad)
+        ttk.Label(lv, text="élévation").grid(row=0, column=0, padx=(0, 4))
+        ttk.Entry(lv, textvariable=self.v["gif_elev"], width=6).grid(row=0, column=1)
+        ttk.Label(lv, text="azimut").grid(row=0, column=2, padx=(10, 4))
+        ttk.Entry(lv, textvariable=self.v["gif_azim"], width=6).grid(row=0, column=3)
+        ttk.Label(lv, text="°", foreground=_GRIS).grid(row=0, column=4, padx=(2, 10))
+        for j, nom in enumerate(self.VUES, start=5):
+            ttk.Button(lv, text=nom, command=lambda n=nom: self._vue_predefinie(n)).grid(row=0, column=j, padx=2)
+        self.btn_apercu = ttk.Button(lv, text="Choisir à la souris…", command=self._apercu_vue)
+        self.btn_apercu.grid(row=0, column=5 + len(self.VUES), padx=(10, 0))
         self.btn_gif = ttk.Button(f, text="Créer le GIF", command=self._creer_gif)
-        self.btn_gif.grid(row=2, column=0, sticky="w", **pad)
+        self.btn_gif.grid(row=4, column=0, sticky="w", **pad)
         self.lbl_gif = ttk.Label(f, foreground=_GRIS, wraplength=660, justify="left",
-                                 text="Utilise les X3d/Y3d/Z3d.txt déjà reconstruits (mêmes méthode, degré et état plat que "
-                                      "ci-dessus), avec l'axe vertical, l'inversion de Z et l'échelle de couleur choisis.")
-        self.lbl_gif.grid(row=2, column=1, columnspan=2, sticky="w", **pad)
+                                 text="Utilise les X3d/Y3d/Z3d.txt déjà reconstruits, avec l'axe vertical, "
+                                      "l'inversion de Z et l'échelle de couleur choisis ci-dessus.")
+        self.lbl_gif.grid(row=4, column=1, columnspan=2, sticky="w", **pad)
 
         # --- Boutons ---
         fb = ttk.Frame(self.root)
@@ -379,6 +397,8 @@ class Detect3DGUI:
                                        f"lancer d'abord {avant}", foreground=self.ROUGE)
         self.lbl_sortie.configure(text=f"Résultats dans : {essai.dossier_sortie}")
 
+        self._maj_gif(essai if degre is not None else None)
+
         degres = essai.degres_disponibles()
         if degre is not None and degre in degres:
             ou = essai.dossier_constantes()
@@ -394,8 +414,34 @@ class Detect3DGUI:
 
     # ----- GIF -----
 
-    def _creer_gif(self):
-        """Fabrique le GIF du gonflement depuis les X3d/Y3d/Z3d.txt de l'essai (sans refaire la reconstruction)."""
+    def _maj_gif(self, essai=None):
+        """✔ vert / ✘ rouge : la reconstruction (X3d/Y3d/Z3d.txt) existe-t-elle pour ces réglages ?
+        Sans elle, le GIF ne peut pas être créé (boutons grisés)."""
+        if essai is None:
+            try:
+                essai = self._courant(int(self.v["degre"].get()))
+            except ValueError:
+                essai = None
+        infos = essai.infos_reconstruction() if essai is not None else None
+        if infos:
+            self.lbl_recon.configure(foreground=self.VERT, text=f"✔ reconstruction trouvée : {infos[0]} images, "
+                                     f"{infos[1]} points (dans {essai.dossier_sortie})")
+        else:
+            ou = essai.dossier_sortie if essai is not None else "(degré invalide)"
+            self.lbl_recon.configure(foreground=self.ROUGE, text=f"✘ reconstruction introuvable dans {ou} : "
+                                     "la lancer d'abord (bouton « Lancer », mêmes méthode, degré et état plat)")
+        etat = "normal" if infos else "disabled"
+        self.btn_gif.configure(state=etat)
+        self.btn_apercu.configure(state=etat)
+
+    def _vue_predefinie(self, nom):
+        elev, azim = self.VUES[nom]
+        self.v["gif_elev"].set(f"{elev:g}")
+        self.v["gif_azim"].set(f"{azim:g}")
+
+    def _lire_gif(self, complet=True):
+        """Lit et vérifie le bloc GIF. Renvoie {essai, images, fps, dpi, vue} ou None (erreurs affichées).
+        complet=False : sans images par seconde ni résolution (pour l'aperçu du point de vue)."""
         erreurs = []
         try:
             degre = int(self.v["degre"].get())
@@ -408,19 +454,26 @@ class Detect3DGUI:
             images = ()
             erreurs.append("Images du GIF : entiers ou plages a:b séparés par des virgules (ex. 1:30, -1), ou vide")
         try:
-            fps = float(self.v["gif_fps"].get().replace(",", "."))
-            if fps <= 0:
+            vue = tuple(float(self.v[k].get().replace(",", ".")) for k in ("gif_elev", "gif_azim"))
+            if not -90 <= vue[0] <= 90:
                 raise ValueError
         except ValueError:
-            fps = None
-            erreurs.append("Images par seconde : nombre > 0")
-        try:
-            dpi = int(self.v["gif_dpi"].get())
-            if not 30 <= dpi <= 300:
-                raise ValueError
-        except ValueError:
-            dpi = None
-            erreurs.append("Résolution : entier entre 30 et 300 dpi")
+            vue = None
+            erreurs.append("Point de vue : élévation entre -90 et 90°, azimut en degrés (nombres)")
+        fps = dpi = None
+        if complet:
+            try:
+                fps = float(self.v["gif_fps"].get().replace(",", "."))
+                if fps <= 0:
+                    raise ValueError
+            except ValueError:
+                erreurs.append("Images par seconde : nombre > 0")
+            try:
+                dpi = int(self.v["gif_dpi"].get())
+                if not 30 <= dpi <= 300:
+                    raise ValueError
+            except ValueError:
+                erreurs.append("Résolution : entier entre 30 et 300 dpi")
         echelle = dict(z_min=-10.0, z_bleu=0.0, z_jaune=30.0, z_max=50.0)
         if self.v["couleurs_fixes"].get():
             try:
@@ -432,20 +485,64 @@ class Detect3DGUI:
                 erreurs.append("Échelle de couleur : min, bleu, jaune et max doivent être des nombres")
         if erreurs:
             messagebox.showerror("Paramètres invalides", "\n".join(erreurs), parent=self.root)
-            return
-
+            return None
         essai = Detect3D(dossier_essai=self.v["dossier_essai"].get().strip(), dossier_calib=self.dossier_calib,
                          methode=self.v["methode"].get(), degre=degre, etat_plat=self.v["etat_plat"].get(),
                          affichage_z=self.v["affichage_z"].get(), inverser_z=self.v["inverser_z"].get(),
                          couleurs_fixes=self.v["couleurs_fixes"].get(), **echelle)
+        return {"essai": essai, "images": images or None, "fps": fps, "dpi": dpi, "vue": vue}
+
+    def _apercu_vue(self):
+        """Fenêtre avec le dôme (dernière image du GIF) : on le tourne à la souris, puis « Utiliser cette
+        vue » recopie l'élévation et l'azimut dans les champs."""
+        p = self._lire_gif(complet=False)
+        if p is None:
+            return
+        try:
+            ctx = p["essai"].preparer_gif(p["images"])
+        except Exception as e:
+            messagebox.showerror("Point de vue du GIF", str(e), parent=self.root)
+            return
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        from matplotlib.figure import Figure
+
+        fen = Style.fenetre(self.root, "Point de vue du GIF")
+        fen.transient(self.root)
+        fen.grab_set()
+        fig = Figure(figsize=(8, 6), dpi=100)
+        canvas = FigureCanvasTkAgg(fig, master=fen)
+        ax = p["essai"].dessiner_trame(fig, ctx, len(ctx["lignes"]) - 1, p["vue"])
+        canvas.get_tk_widget().grid(row=0, column=0, columnspan=3, padx=6, pady=6)
+        canvas.draw()
+        ttk.Label(fen, foreground=_GRIS, wraplength=560, justify="left",
+                  text="Clic gauche + glisser : tourner ; clic droit + glisser : zoom. "
+                       "Le GIF aura le point de vue affiché à la validation.").grid(
+            row=1, column=0, sticky="w", padx=6)
+
+        def utiliser():
+            self.v["gif_elev"].set(f"{ax.elev:.0f}")
+            self.v["gif_azim"].set(f"{ax.azim:.0f}")
+            fen.destroy()
+
+        ttk.Button(fen, text="Annuler", command=fen.destroy).grid(row=1, column=1, padx=4, pady=(0, 6))
+        ttk.Button(fen, text="Utiliser cette vue", command=utiliser).grid(row=1, column=2, padx=(4, 6), pady=(0, 6))
+        fen.bind("<Escape>", lambda _e: fen.destroy())
+
+    def _creer_gif(self):
+        """Fabrique le GIF du gonflement depuis les X3d/Y3d/Z3d.txt de l'essai (sans refaire la reconstruction)."""
+        p = self._lire_gif()
+        if p is None:
+            return
 
         def progression(k, n):
             self.lbl_gif.configure(text=f"Création du GIF : image {k} / {n}…", foreground=_GRIS)
             self.root.update()
 
         self.btn_gif.configure(state="disabled")
+        self.btn_apercu.configure(state="disabled")
         try:
-            chemin = essai.gif(images=images or None, fps=fps, dpi=dpi, progression=progression)
+            chemin = p["essai"].gif(images=p["images"], fps=p["fps"], dpi=p["dpi"], vue=p["vue"],
+                                    progression=progression)
         except Exception as e:                                   # fichiers absents, images hors limites...
             self.lbl_gif.configure(text="✘ GIF non créé", foreground=_ROUGE)
             messagebox.showerror("GIF du gonflement", str(e), parent=self.root)
@@ -453,7 +550,7 @@ class Detect3DGUI:
             self.lbl_gif.configure(text=f"✔ GIF enregistré : {chemin}", foreground=_VERT)
             messagebox.showinfo("GIF du gonflement", f"GIF enregistré :\n{chemin}", parent=self.root)
         finally:
-            self.btn_gif.configure(state="normal")
+            self._maj_gif()                                      # réactive les boutons si la reconstruction existe
 
     # ----- validation -----
 

@@ -375,28 +375,35 @@ class Detect3D:
         self.X, self.Y, self.Z = (np.loadtxt(self.dossier_sortie / f"{k}3d.txt", ndmin=2)
                                   for k in self.RESULTATS)
 
-    def gif(self, images=None, fps=10.0, dpi=80, pause_fin=1.5, fichier=None, progression=None):
-        """GIF du gonflement : une image par photo de l'essai, mêmes axes et même échelle de couleur
-        pour toutes (sinon le dôme ne « gonflerait » pas à l'écran).
+    _cache_infos = {}                     # (fichier, date, taille) -> (images, points)
 
-        images      numéros d'image comme images_a_tracer (0 = état plat, 1..n = photos, -1 = dernière) ;
-                    None = toutes, dans l'ordre de l'essai
-        fps         images par seconde
-        dpi         résolution (la figure fait 8 × 6 pouces)
-        pause_fin   durée supplémentaire (s) sur la dernière image
-        fichier     chemin du GIF ; None = <dossier de sortie>/Gonflement.gif
-        progression fonction (k, n) appelée après chaque image
-        Utilise X3d/Y3d/Z3d de la reconstruction (relus du disque si besoin), les mêmes options
-        d'axe vertical (affichage_z), d'inversion de Z, d'exclusions et d'échelle de couleur que tracer().
-        Renvoie le chemin du GIF.
+    def infos_reconstruction(self):
+        """(nombre d'images, nombre de points) de la reconstruction enregistrée (X3d/Y3d/Z3d.txt du
+        dossier de sortie), ou None s'il en manque un (reconstruction pas encore faite)."""
+        fichiers = [self.dossier_sortie / f"{k}3d.txt" for k in self.RESULTATS]
+        if not all(f.is_file() for f in fichiers):
+            return None
+        st = fichiers[0].stat()
+        cle = (str(fichiers[0]), st.st_mtime_ns, st.st_size)
+        if cle not in self._cache_infos:                  # évite de relire le fichier à chaque appel
+            nb, pts = 0, 0
+            with open(fichiers[0], encoding="utf-8") as f:
+                for ligne in f:
+                    if ligne.strip():
+                        nb += 1
+                        pts = pts or len(ligne.split())
+            self._cache_infos[cle] = (nb, pts)
+        return self._cache_infos[cle]
+
+    def preparer_gif(self, images=None):
+        """Ce qui est commun à toutes les images du GIF : nuages de points, axes et échelle de
+        couleur identiques pour toutes (sinon le dôme ne « gonflerait » pas à l'écran).
+
+        images : numéros d'image comme images_a_tracer (0 = état plat, 1..n = photos, -1 = dernière) ;
+        None = toutes, dans l'ordre de l'essai. Renvoie un dictionnaire pour dessiner_trame.
         """
-        from PIL import Image
-        from matplotlib.backends.backend_agg import FigureCanvasAgg
         from matplotlib.cm import ScalarMappable
-        from matplotlib.figure import Figure
 
-        if fps <= 0:
-            raise ValueError("Images par seconde : doit être > 0")
         self.charger_resultats()
         if images:
             lignes = []
@@ -416,48 +423,85 @@ class Detect3D:
         if tous[0].size == 0:
             raise ValueError("Aucune tache valide à tracer")
 
-        # axes communs à toutes les images : x et y comme tracer() (élargis si les données sortent),
-        # même étendue en x et en y ; z d'après l'ensemble des images
+        # x et y comme tracer() (élargis si les données sortent), même étendue en x et en y ;
+        # z d'après l'ensemble des images
         def limites(v):
             return min(-10.0, v.min() - 5), max(90.0, v.max() + 5)
         (xa, xb), (ya, yb) = limites(tous[0]), limites(tous[1])
         demi = max(xb - xa, yb - ya) / 2
-        xlim = ((xa + xb) / 2 - demi, (xa + xb) / 2 + demi)
-        ylim = ((ya + yb) / 2 - demi, (ya + yb) / 2 + demi)
         zmin, zmax = float(tous[2].min()), float(tous[2].max())
         marge = 0.05 * max(zmax - zmin, 1.0)
-        zlim = (zmin - marge, zmax + marge)
         norme = self.norme_couleurs() or mcolors.Normalize(vmin=zmin, vmax=max(zmax, zmin + 1e-9))
         carte = ScalarMappable(norm=norme, cmap="viridis")
         carte.set_array([])
-        quoi = {"position": "Z", "plan": "Z − plan médian de l'image 0",
-                "deplacement": "déplacement Z / image 0"}[self.affichage_z]
-        derniere = len(self.X) - 1 if self.etat_plat else len(self.X)
+        return {
+            "lignes": lignes, "nuages": nuages, "norme": norme, "carte": carte,
+            "xlim": ((xa + xb) / 2 - demi, (xa + xb) / 2 + demi),
+            "ylim": ((ya + yb) / 2 - demi, (ya + yb) / 2 + demi),
+            "zlim": (zmin - marge, zmax + marge),
+            "quoi": {"position": "Z", "plan": "Z − plan médian de l'image 0",
+                     "deplacement": "déplacement Z / image 0"}[self.affichage_z],
+            "derniere": len(self.X) - 1 if self.etat_plat else len(self.X),
+        }
 
+    def dessiner_trame(self, fig, ctx, k, vue=None):
+        """Dessine dans fig l'image k (0..n-1) du GIF préparé par preparer_gif ; renvoie les axes 3D.
+
+        vue : (élévation, azimut) en degrés de la caméra virtuelle ; None = VUE_GIF.
+        """
+        elev, azim = vue or self.VUE_GIF
+        ligne = ctx["lignes"][k]
+        x, y, z = ctx["nuages"][k]
+        num = ligne if self.etat_plat else ligne + 1
+        ax = fig.add_subplot(projection="3d")
+        ax.view_init(elev=elev, azim=azim)
+        ax.grid(visible=True, color="grey", linestyle="-.", linewidth=0.3, alpha=0.2)
+        ax.set_xlabel("X"); ax.set_ylabel("Y"); ax.set_zlabel("Z")
+        ax.set_xlim(*ctx["xlim"]); ax.set_ylim(*ctx["ylim"]); ax.set_zlim(*ctx["zlim"])
+        ax.set_box_aspect((1, 1, 0.4))
+        ax.scatter3D(x, y, z, alpha=0.8, c=z, cmap="viridis", norm=ctx["norme"], s=12)
+        ax.set_title(f"{self.methode} {self.tag} - image {num} / {ctx['derniere']}\n{ctx['quoi']} (mm), "
+                     f"{len(x)} points", fontsize=10)
+        cbar = fig.colorbar(ctx["carte"], ax=ax, shrink=0.5, aspect=8,
+                            extend="both" if self.couleurs_fixes else "neither")
+        if self.couleurs_fixes:
+            cbar.set_ticks([self.z_min, self.z_bleu, self.z_jaune, self.z_max])
+            cbar.set_ticklabels([f"{v:g}" for v in (self.z_min, self.z_bleu, self.z_jaune, self.z_max)])
+        return ax
+
+    def gif(self, images=None, fps=10.0, dpi=80, pause_fin=1.5, fichier=None, progression=None, vue=None):
+        """GIF du gonflement : une image par photo de l'essai, mêmes axes et même échelle de couleur
+        pour toutes.
+
+        images      numéros d'image comme images_a_tracer ; None = toutes, dans l'ordre de l'essai
+        fps         images par seconde
+        dpi         résolution (la figure fait 8 × 6 pouces)
+        pause_fin   durée supplémentaire (s) sur la dernière image
+        fichier     chemin du GIF ; None = <dossier de sortie>/Gonflement.gif
+        progression fonction (k, n) appelée après chaque image
+        vue         (élévation, azimut) en degrés du point de vue ; None = VUE_GIF
+        Utilise X3d/Y3d/Z3d de la reconstruction (relus du disque si besoin), les mêmes options
+        d'axe vertical (affichage_z), d'inversion de Z, d'exclusions et d'échelle de couleur que tracer().
+        Renvoie le chemin du GIF.
+        """
+        from PIL import Image
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        from matplotlib.figure import Figure
+
+        if fps <= 0:
+            raise ValueError("Images par seconde : doit être > 0")
+        ctx = self.preparer_gif(images)
+        n = len(ctx["lignes"])
         trames = []
-        for k, (ligne, (x, y, z)) in enumerate(zip(lignes, nuages), start=1):
-            num = ligne if self.etat_plat else ligne + 1
+        for k in range(n):
             fig = Figure(figsize=(8, 6), dpi=dpi)
             FigureCanvasAgg(fig)                           # rendu hors écran : pas de fenêtre
-            ax = fig.add_subplot(projection="3d")
-            ax.view_init(elev=self.VUE_GIF[0], azim=self.VUE_GIF[1])
-            ax.grid(visible=True, color="grey", linestyle="-.", linewidth=0.3, alpha=0.2)
-            ax.set_xlabel("X"); ax.set_ylabel("Y"); ax.set_zlabel("Z")
-            ax.set_xlim(*xlim); ax.set_ylim(*ylim); ax.set_zlim(*zlim)
-            ax.set_box_aspect((1, 1, 0.4))
-            ax.scatter3D(x, y, z, alpha=0.8, c=z, cmap="viridis", norm=norme, s=12)
-            ax.set_title(f"{self.methode} {self.tag} - image {num} / {derniere}\n{quoi} (mm), "
-                         f"{len(x)} points", fontsize=10)
-            cbar = fig.colorbar(carte, ax=ax, shrink=0.5, aspect=8,
-                                extend="both" if self.couleurs_fixes else "neither")
-            if self.couleurs_fixes:
-                cbar.set_ticks([self.z_min, self.z_bleu, self.z_jaune, self.z_max])
-                cbar.set_ticklabels([f"{v:g}" for v in (self.z_min, self.z_bleu, self.z_jaune, self.z_max)])
+            self.dessiner_trame(fig, ctx, k, vue)
             fig.canvas.draw()
             rgba = np.asarray(fig.canvas.buffer_rgba())
             trames.append(Image.fromarray(rgba[..., :3].copy()).quantize(colors=256))
             if progression:
-                progression(k, len(lignes))
+                progression(k + 1, n)
 
         duree = round(1000 / fps)
         durees = [duree] * len(trames)
