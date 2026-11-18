@@ -282,7 +282,7 @@ class Detect3DGUI:
         self._maj_couleurs()
 
         # --- GIF du gonflement ---
-        f = self._bloc("GIF du gonflement", 3)
+        f = self._bloc("GIF du gonflement (fonctionne seulement après avoir fait une reconstruction)", 3)
         ttk.Label(f, text="Images du GIF").grid(row=0, column=0, sticky="w", **pad)
         lg = ttk.Frame(f)
         lg.grid(row=0, column=1, columnspan=2, sticky="w", **pad)
