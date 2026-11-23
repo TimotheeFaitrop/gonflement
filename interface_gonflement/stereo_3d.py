@@ -1,4 +1,4 @@
-"""Déformation 3D en temps réel par stéréo-corrélation (Pycaso, Zernike ou Lagrange).
+"""Déformation 3D en temps réel par stéréo-corrélation (StereoComplex, ou Pycaso : Zernike / Lagrange).
 
 Chaîne utilisée pour le pilotage en déformation :
 
@@ -14,7 +14,9 @@ Chaîne utilisée pour le pilotage en déformation :
    gauche, puis appariées une à une par l'algorithme hongrois — même principe
    que Pycaso/detection_spots_appariemment.py.
 3. Identification 3D de chaque paire avec l'étalonnage :
-   pcs.Zernike_identification(gauche, droite, A_Zernike, degré, taille caméras)
+   StereoComplex : stereo_complex.Modele3D(SC_<n>/model.json).triangulation(gauche, droite)
+   (points ramenés au repère de la mire, comme Pycaso)
+   Pycaso : pcs.Zernike_identification(gauche, droite, A_Zernike, degré, taille caméras)
    (ou pcs.Lagrange_identification). Les points sont au format Pycaso
    (colonne, ligne), la droite en coordonnées brutes, comme à l'étalonnage.
 4. Déformation = allongement des distances 3D entre taches par rapport à la
@@ -193,8 +195,8 @@ class StereoDeformation(crappy.blocks.Block):
         self.freq = freq
         self.fichier = str(fichier_constantes)
         self.methode = methode
-        self.degre = degre or degre_depuis_chemin(fichier_constantes,
-                                                  12 if methode == "Zernike" else 4)
+        self.degre = degre or degre_depuis_chemin(
+            fichier_constantes, {"Zernike": 12, "StereoComplex": 10}.get(methode, 4))
         self.taille_image = taille_image
         self.dims = dims_cameras
         self.rotation_droite = rotation_droite
@@ -204,6 +206,27 @@ class StereoDeformation(crappy.blocks.Block):
                        "points_3d"]
 
     def prepare(self):
+        if self.methode == "StereoComplex":
+            try:
+                from .stereo_complex import Modele3D
+            except ImportError:
+                from stereo_complex import Modele3D
+            modele = Modele3D(self.fichier)
+            if self.dims is None:
+                self.dims, origine = modele.dims, "lues dans le modèle"
+            else:
+                origine = "fournie"
+            self.log(20, f"Stéréo StereoComplex (ordre {self.degre}), modèle {self.fichier}, "
+                         f"caméras {self.dims} ({origine})")
+
+            def identifier(L, R):
+                return modele.triangulation(L, R)
+            self.calcul = CalculDeformation(identifier, self.dims[0], self.dims[1],
+                                            self.rotation_droite, self.composante)
+            self.gauche = deque(maxlen=200)
+            self.droite = deque(maxlen=200)
+            self.erreurs = 0
+            return
         pcs = importer_pycaso()
         A = np.load(self.fichier)
         if self.dims is None:

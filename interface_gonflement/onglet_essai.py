@@ -235,13 +235,13 @@ class OngletEssai(ttk.Frame):
                 aide="Débit ajouté proportionnel à la vitesse de rampe (0 = désactivé)")
         a.champ(c, 11, "Coupure sans mesure", "essai.deformation.timeout_mesure", "s",
                 aide="Débit coupé si plus aucune déformation n'arrive (taches perdues)")
-        self.cadre_3d = ttk.LabelFrame(c, text="Stéréo-corrélation 3D (Pycaso)", padding=4)
+        self.cadre_3d = ttk.LabelFrame(c, text="Stéréo-corrélation 3D (StereoComplex / Pycaso)", padding=4)
         self.cadre_3d.grid(row=12, column=0, columnspan=3, sticky="ew", padx=4, pady=6)
         d = self.cadre_3d
-        a.choix(d, 0, "Modèle", "essai.deformation.methode_3d", ["Zernike", "Lagrange"])
+        a.choix(d, 0, "Modèle", "essai.deformation.methode_3d", ["StereoComplex", "Zernike", "Lagrange"])
         a.chemin_choisi(d, 1, "Constantes", "essai.deformation.fichier_constantes", largeur=22)
         a.champ(d, 2, "Degré", "essai.deformation.pform",
-                aide="Lu dans le nom du dossier (nZ_12 -> 12)")
+                aide="Lu dans le nom du dossier (SC_10 -> 10, nZ_12 -> 12)")
         a.case(d, 3, "Caméra droite en miroir (tournée de 180°)",
                "essai.deformation.rotation_droite")
         ttk.Button(d, text="Prendre la dernière calibration",
@@ -409,12 +409,14 @@ class OngletEssai(ttk.Frame):
         if n is not None:
             self.app.v("essai.deformation.pform").set(str(n))
             self.app.v("essai.deformation.methode_3d").set(
-                "Lagrange" if Path(fichier).name.startswith("L_") else "Zernike")
+                "StereoComplex" if Path(fichier).name == "model.json"
+                else "Lagrange" if Path(fichier).name.startswith("L_") else "Zernike")
 
     def derniere_calibration(self):
         """Fichier de constantes le plus récent sous le dossier racine."""
         m = self.app.v("essai.deformation.methode_3d").get()
-        motif = "nZ_*/A_Zernike.npy" if m == "Zernike" else "Lpform_*/L_constants.npy"
+        motif = {"StereoComplex": "SC_*/model.json",
+                 "Zernike": "nZ_*/A_Zernike.npy"}.get(m, "Lpform_*/L_constants.npy")
         racine = self.app.chemin(self.app.v("materiel.dossier_racine").get())
         trouves = sorted(racine.glob(f"**/[Rr]esults_[Cc]alib/{motif}"),
                          key=lambda p: p.stat().st_mtime) if racine.is_dir() else []
@@ -544,7 +546,13 @@ def verifier(cfg):
                 and not Path(d["fichier_constantes"]).is_file():
             e.append("Constantes de calibration 3D introuvables : "
                      f"{d['fichier_constantes'] or '(vide)'}\n"
-                     "(results_calib/nZ_<degré>/A_Zernike.npy)")
+                     "(results_calib/SC_<n>/model.json, nZ_<n>/A_Zernike.npy ou "
+                     "Lpform_<n>/L_constants.npy)")
+        elif d["source"] == "3D" and d["methode_3d"] == "StereoComplex" \
+                and not cfg["materiel"]["simulation"] \
+                and not (Path(d["fichier_constantes"]).parent / "repere_mire.npz").is_file():
+            e.append("Calibration StereoComplex incomplète : repere_mire.npz absent à côté de "
+                     "model.json (refaire la calibration)")
     return e
 
 

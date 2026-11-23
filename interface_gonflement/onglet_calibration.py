@@ -1,6 +1,6 @@
 """Onglet Calibration : reprend les programmes du dépôt.
 
-  1. Réglage       test hauteur (Z départ -> Z fin des plans), origine (G92), photos
+  1. Réglage       test hauteur (Z départ -> Z fin des plans), début d'essai (Z = 70), origine (G92), photos
   En haut         dossier racine, date, nom de l'essai (toujours visibles)
   2. Plans z       Z départ, Z fin, pas
   3. Acquisition   en boucle fermée : photo une fois le plateau arrivé (sequence_calibration.py)
@@ -21,11 +21,12 @@ except ImportError:
 
 # Comme METHOD_DEFAULTS de Pycaso/calibration_gui.py : (valeurs, degré, itérations)
 METHODES = {
+    "StereoComplex": ([str(i) for i in range(2, 17)], "10", 1),
     "Lagrange": ([str(i) for i in range(1, 9)], "4", 10),
     "Soloff": (["111", "221", "222", "332", "333", "443", "444", "554", "555"], "332", 8),
     "Zernike": ([str(i) for i in range(2, 16)], "6", 9),
 }
-LIBELLES = {"Lagrange": "Degré (Lpform)", "Soloff": "Forme (aab)", "Zernike": "Ordre (nZ)"}
+LIBELLES = {"StereoComplex": "Ordre de Zernike (nmax)", "Lagrange": "Degré (Lpform)", "Soloff": "Forme (aab)", "Zernike": "Ordre (nZ)"}
 NCX, NCY, SQR = 12, 12, 7.5        # mire ChArUco fixée dans Pycaso/calibration_class.py
 
 
@@ -44,7 +45,7 @@ class OngletCalibration(ttk.Frame):
         self.plans(a.cadre(g, "1. Plans z (mm)"))
         self.reglage(a.cadre(g, "2. Réglage du plateau et des caméras"))
         self.acquisition(a.cadre(g, "3. Acquisition des images (plan par plan)"))
-        self.methode(a.cadre(g, "4. Méthode et calcul (Pycaso)"))
+        self.methode(a.cadre(g, "4. Méthode et calcul (StereoComplex / Pycaso)"))
 
     # ----------------------------------------------------------------- 1
     
@@ -142,20 +143,26 @@ class OngletCalibration(ttk.Frame):
                                         f"{reste} — environ {duree / 60:.1f} min (origine puis Z = {z[0]:g})")
 
     # ----------------------------------------------------------------- 2
-           
+
+            
     def reglage(self, f):
         a = self.app
         port = lambda: a.v("materiel.port_imprimante").get()  # noqa: E731
         b = ttk.Frame(f)
         b.grid(row=0, column=0, columnspan=5, sticky="w", padx=4, pady=4)
-        
-        ttk.Button(b, text="Aperçu", command=self.apercu).pack(side="left", padx=3)
-        ttk.Button(b, text="Prendre une photo", command=self.photo).pack(side="left", padx=3)
-        ttk.Button(b, text="Changer origine Z", command=self.changer_origine).pack(side="left", padx=3)
         self.btn_test = ttk.Button(b, text="Test hauteur", command=self.test_hauteur)
         self.btn_test.pack(side="left", padx=3)
+        ttk.Button(b, text="Début d'essai (Z = 70)", command=lambda: a.outil(
+            "Plateau en début d'essai", "aller_z", port(), 70, "--origine")).pack(side="left", padx=3)
         self.lbl_test = a.note(f, 1, "", 620)
-
+        b = ttk.Frame(f)
+        b.grid(row=2, column=0, columnspan=5, sticky="w", padx=4, pady=4)
+        ttk.Button(b, text="Changer origine Z", command=self.changer_origine).pack(side="left", padx=3)
+        ttk.Button(b, text="Aperçu", command=self.apercu).pack(side="left", padx=3)
+        ttk.Button(b, text="Prendre une photo", command=self.photo).pack(side="left", padx=3)
+        ttk.Button(b, text="Tester les caméras", command=lambda: a.outil(
+            "Test caméras", "test_cameras", a.v("materiel.sn_gauche").get(),
+            a.v("materiel.sn_droite").get())).pack(side="left", padx=3)
         a.champ(f, 3, "Aller à Z", "calibration.z_reglage", "mm")
         self.origine_avant = tk.BooleanVar(value=True)
         ttk.Button(f, text="Aller", command=self.aller_z).grid(row=3, column=4, padx=4)
@@ -166,9 +173,10 @@ class OngletCalibration(ttk.Frame):
             return
         self.btn_test.configure(text=f"Test hauteur (Z {z0:g} → {z1:g})")
         self.lbl_test.configure(text=(
-            "Test hauteur : aperçu des deux caméras en direct ; origine puis "
-            f"Z = {z0:g} mm, Espace pour passer à Z = {z1:g} mm (et revenir), q pour fermer. "
-            "Hauteurs reprises des plans z (1)."))
+            "Test hauteur : aperçu des deux caméras avec leur netteté en direct ; origine "
+            f"puis Z = {z0:g} mm, Espace pour passer à Z = {z1:g} mm (et revenir), q pour fermer. "
+            "Hauteurs reprises des plans z (1). "
+            "La netteté de chaque hauteur est notée dans la console."))
 
     def test_hauteur(self):
         a = self.app
@@ -200,6 +208,7 @@ class OngletCalibration(ttk.Frame):
             "Changer l'origine Z",
             "Valeur à donner à la position ACTUELLE du plateau (mm) :\n"
             "(0 = le plateau est à l'origine ici)\n\n"
+            "Attention : une prise d'origine (G28 : « origine avant », Test hauteur, "
             "Début d'essai, acquisition) ou un redémarrage de l'imprimante revient à "
             "l'origine de la machine.", initialvalue=0.0, parent=self)
         if z is not None:
@@ -292,13 +301,18 @@ class OngletCalibration(ttk.Frame):
     # ----------------------------------------------------------------- 3
     def acquisition(self, f):
         a = self.app
+        a.champ(f, 0, "Exposition gauche", "calibration.expo_gauche", "µs")
+        a.champ(f, 1, "Exposition droite", "calibration.expo_droite", "µs")
         a.champ(f, 2, "Stabilisation avant photo", "calibration.stabilisation", "s",
                 aide="Temps pendant lequel le plateau doit rester à la bonne hauteur "
                      "(position lue) avant le déclenchement des caméras")
         a.case(f, 5, "Afficher le graphe de la hauteur du plateau (Grapher crappy)",
                "calibration.graphe_hauteur")
         a.champ(f, 4, "Vitesse du plateau", "calibration.vitesse_plateau", "mm/min")
-    
+        a.note(f, 7, "Plan par plan : le plateau va à la hauteur, la position lue doit être "
+                     "atteinte et stable, puis les deux caméras sont déclenchées ; on attend "
+                     "les deux images avant le plan suivant. La hauteur lue au moment de chaque "
+                     "photo est notée (positions_photos.csv et document des hauteurs).", 620)
         self.maj_plans()
         b = ttk.Frame(f)
         b.grid(row=6, column=0, columnspan=4, sticky="w", padx=4, pady=6)
@@ -308,10 +322,6 @@ class OngletCalibration(ttk.Frame):
                    ).pack(side="left", padx=3)
         ttk.Button(b, text="Ouvrir le document", command=self.ouvrir_document
                    ).pack(side="left", padx=3)
-        a.note(f, 7, "Plan par plan : le plateau va à la hauteur, la position lue doit être "
-                             "atteinte et stable, puis les deux caméras sont déclenchées ; on attend "
-                             "les deux images avant le plan suivant. La hauteur lue au moment de chaque "
-                             "photo est notée (positions_photos.csv et document des hauteurs).", 620)
         a.note(f, 8, "Le document hauteurs_calibration.txt (et .csv) est écrit "
                      "automatiquement dans le dossier images calib à chaque acquisition : "
                      "hauteur de départ, pas, hauteur de chaque plan et images prises.", 620)
@@ -369,8 +379,9 @@ class OngletCalibration(ttk.Frame):
         self.combo_forme = ttk.Combobox(f, textvariable=a.v("calibration.pform"), width=12)
         self.combo_forme.grid(row=1, column=1, sticky="w", padx=4, pady=3)
         ttk.Label(f, text="Itérations").grid(row=2, column=0, sticky="w", padx=8, pady=3)
-        ttk.Spinbox(f, from_=1, to=12, textvariable=a.v("calibration.iterations"), width=6
-                    ).grid(row=2, column=1, sticky="w", padx=4, pady=3)
+        self.spin_iter = ttk.Spinbox(f, from_=1, to=12, textvariable=a.v("calibration.iterations"),
+                                     width=6)
+        self.spin_iter.grid(row=2, column=1, sticky="w", padx=4, pady=3)
         a.note(f, 3, "Les metadata.csv sont sortis des dossiers caméra avant chaque calcul "
                      "(Pycaso les prendrait pour des images).")
         a.case(f, 4, "Afficher le nuage 3D à la fin", "calibration.afficher_3d")
@@ -391,6 +402,7 @@ class OngletCalibration(ttk.Frame):
         self.combo_forme.configure(values=valeurs,
                                    state="readonly" if m == "Soloff" else "normal")
         self.lbl_forme.configure(text=LIBELLES[m])
+        self.spin_iter.configure(state="disabled" if m == "StereoComplex" else "normal")  # Pycaso seul
         if not garder:
             a.v("calibration.pform").set(degre)
             a.v("calibration.iterations").set(str(iterations))
@@ -410,7 +422,8 @@ class OngletCalibration(ttk.Frame):
         if not fichier:
             return
         c = a.reglages["calibration"]
-        nom = {"Zernike": f"nZ_{c['pform']}/A_Zernike.npy",
+        nom = {"StereoComplex": f"SC_{c['pform']}/model.json",
+               "Zernike": f"nZ_{c['pform']}/A_Zernike.npy",
                "Lagrange": f"Lpform_{c['pform']}/L_constants.npy"}.get(c["methode"])
         attendu = d.parent / "results_calib" / nom if nom else None
 

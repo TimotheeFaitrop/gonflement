@@ -64,10 +64,13 @@ def changer_origine(port, z):
     print(f"Nouvelle origine : la position actuelle vaut maintenant Z = {z} mm")
 
 
-def test_hauteur(sn_g, sn_d, expo_g, expo_d, port):
-    """Test de netteté sur toute la plage : origine, Z = 20 mm, puis Espace pour
-    Z = 120 mm (et retour), avec l'aperçu des deux caméras et leur netteté."""
-    apercu(sn_g, sn_d, expo_g, expo_d, port=port, hauteurs=(20, 120))
+def test_hauteur(sn_g, sn_d, expo_g, expo_d, port, z0=20, z1=120):
+    """Test de netteté sur toute la plage : origine, Z = z0 (20 mm par défaut), puis
+    Espace pour Z = z1 (120 mm par défaut) et retour, avec l'aperçu des deux caméras
+    et leur netteté. z0 et z1 viennent des plans z de l'onglet Calibration."""
+    z0, z1 = float(z0), float(z1)
+    z0, z1 = (int(z0) if z0 == int(z0) else z0), (int(z1) if z1 == int(z1) else z1)
+    apercu(sn_g, sn_d, expo_g, expo_d, port=port, hauteurs=(z0, z1))
     print("Test de hauteur terminé")
 
 
@@ -343,7 +346,7 @@ if __name__ == "__main__":
     elif action == "changer_origine":
         changer_origine(args[0], float(args[1]))
     elif action == "test_hauteur":
-        test_hauteur(*args[:5])
+        test_hauteur(*args[:7])
     elif action == "photo":
         photo(*args[:5])
     elif action == "test_cameras":

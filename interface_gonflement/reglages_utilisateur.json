@@ -44,7 +44,7 @@
     },
     "deformation": {
       "source": "3D",
-      "composante": "eyy",
+      "composante": "moyenne",
       "camera": "moyenne",
       "eps_max": 60.0,
       "vitesse": 0.02,
@@ -70,11 +70,11 @@
     "expo_gauche": 28757,
     "graphe_hauteur": true,
     "z_reglage": 70.0,
-    "date": "2026_11_12",
-    "dossier_images": "C:/Users/jazzo/Desktop/doctorat/code/Donnees_Gonflement/Donnees/13-06/2026_11_12/Mvt_Rigide/Mesure",
-    "methode": "Lagrange",
-    "pform": "4",
-    "iterations": 10,
+    "date": "2026_11_23",
+    "dossier_images": "C:/Users/jazzo/Desktop/doctorat/code/Donnees_Gonflement/Donnees/13-06/2026_11_23/Mvt_Rigide/Mesure",
+    "methode": "StereoComplex",
+    "pform": "10",
+    "iterations": 1,
     "deplacer_metadata": false,
     "afficher_3d": true
   }

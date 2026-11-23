@@ -21,6 +21,9 @@ except Exception:  # matplotlib absent : pas de courbes
 SERIES = ("press", "volumetric_flow", "debit_cmd", "cible", "eps")
 
 
+_GARDER = object()      # « ne pas toucher à la limite de pression » (différent de None = aucune limite)
+
+
 class Courbes(ttk.Frame):
 
     def __init__(self, parent, P):
@@ -46,12 +49,16 @@ class Courbes(ttk.Frame):
         self.preparer()
         self.after(500, self._rafraichir)
 
-    def preparer(self, mode=None, pmax=None, P=None):
-        """(Re)crée les axes pour un mode de pilotage ; garde les données."""
+    def preparer(self, mode=None, pmax=_GARDER, P=None):
+        """(Re)crée les axes pour un mode de pilotage ; garde les données.
+
+        pmax : limite de pression tracée en pointillés ; None = aucune (champ masqué en mode
+        pression) ; non précisé = on garde la valeur précédente (ex. changement de thème)."""
         if Figure is None:
             return
         self.mode = mode or self.mode
-        self.pmax = pmax if pmax is not None else self.pmax
+        if pmax is not _GARDER:
+            self.pmax = pmax
         self.P = P or self.P
         C = theme.couleurs_courbes(self.P)
         a1, a2, a3 = self.axes

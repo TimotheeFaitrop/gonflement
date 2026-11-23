@@ -148,6 +148,7 @@ class _Pilotage(crappy.blocks.Block):
         self.pression_max = float(pression_max)
         self.duree_max = float(duree_max)
         self.arret_auto = bool(arret_auto)
+        self._vitesse_auto = True                # vitesse issue de la durée de rampe, pas réglée à la main
         self.label_pression = label_pression
         self.estimateur = estimateur
         self.labels = ["t(s)", "cmd", "debit_cmd", "cible", "consigne",
@@ -167,6 +168,7 @@ class _Pilotage(crappy.blocks.Block):
         self.en_pause = False
         self.securite = False
         self.debit = 0.0             # mL/min envoyé
+        self.a_decolle = False       # la cible a réellement bougé vers une consigne non nulle
         self.etat = ATTENTE
         self.mesure = None
 
@@ -234,6 +236,7 @@ class _Pilotage(crappy.blocks.Block):
     def _avancer_cible(self, dt, maintenant):
         if self.cible is None:
             return
+        avant = self.cible
         ecart = self.consigne - self.cible
         if self.vitesse <= 0:
             self.cible = self.consigne
@@ -241,12 +244,24 @@ class _Pilotage(crappy.blocks.Block):
             pas = self.vitesse * dt
             self.cible = self.consigne if abs(ecart) <= pas else \
                 self.cible + math.copysign(pas, ecart)
+        if self.cible != avant and self.consigne != 0:
+            self.a_decolle = True
         if self.cible == self.consigne:
             if self.t_palier is None:
                 self.t_palier = maintenant
-                self.log(20, "Consigne atteinte : palier")
+                if self.a_decolle:
+                    self.log(20, "Consigne atteinte : palier")
+                elif self.consigne == 0:
+                    self.log(20, "Consigne nulle : en attente d'une nouvelle consigne")
+                else:
+                    self.log(30, f"Consigne {self.consigne:g} déjà atteinte au départ (inférieure ou égale à "
+                                 "la mesure initiale ?) : rien à injecter, en attente d'une nouvelle consigne")
             self.etat = PALIER
-            if self.duree_palier > 0 and maintenant - self.t_palier >= self.duree_palier:
+            # tant que la cible n'a pas bougé (consigne nulle, ou déjà atteinte au départ), il n'y a
+            # aucun palier à tenir : la durée du palier ne compte pas (sinon l'essai se terminait
+            # tout seul sans avoir injecté)
+            if (self.duree_palier > 0 and self.a_decolle
+                    and maintenant - self.t_palier >= self.duree_palier):
                 self.log(20, "Fin du palier")
                 self.etat = FIN
                 self.t_fin = maintenant
@@ -291,6 +306,7 @@ class _Pilotage(crappy.blocks.Block):
                     continue
                 self.log(20, f"Nouvelle consigne : {v}")
                 self.consigne = v
+                self._nouvelle_consigne(v)
                 if self.etat in (PALIER, FIN) and not self.securite:
                     self.etat = RAMPE
                     self.t_fin = None
@@ -298,6 +314,7 @@ class _Pilotage(crappy.blocks.Block):
             elif action == "vitesse":
                 try:
                     self.vitesse = float(msg["valeur"])
+                    self._vitesse_auto = False
                     self.log(20, f"Nouvelle vitesse de rampe : {self.vitesse}")
                 except (KeyError, TypeError, ValueError):
                     pass
@@ -308,9 +325,10 @@ class _Pilotage(crappy.blocks.Block):
                 self.en_pause = False
                 self.log(20, "Reprise")
             elif action == "fin":
-                self.log(20, "Fin du profil demandée")
+                self.log(20, "Fin du profil demandée : débit coupé, arrêt de la prise de points")
                 self.etat = FIN
                 self.t_fin = time.time()
+                self.arret_auto = True      # l'essai (donc l'enregistrement) s'arrête ensuite
             elif action in ("stop", "urgence"):
                 self.log(30, f"Arrêt demandé par l'interface ({action})")
                 self.securite = action == "urgence"
@@ -325,6 +343,9 @@ class _Pilotage(crappy.blocks.Block):
     def _cible_initiale(self):
         return 0.0
 
+    def _nouvelle_consigne(self, v):
+        """Appelé quand l'interface envoie une nouvelle consigne (à surcharger si besoin)."""
+
     def _calcul_debit(self, dt, nouveau, maintenant):
         raise NotImplementedError
 
@@ -334,7 +355,19 @@ class PilotageDebit(_Pilotage):
     """Consigne de débit (mL/min) en rampe puis palier.
 
     Pause = débit coupé (le ballon garde son volume, aux fuites près).
+
+    duree_rampe : durée de la montée de 0 à la consigne (0 = échelon). Si l'essai démarre avec
+    une consigne nulle, la pente ne peut pas en être déduite au départ ; elle l'est alors à la
+    première consigne non nulle envoyée en direct (sauf si la vitesse a été réglée à la main).
     """
+
+    def __init__(self, duree_rampe=0.0, **kw):
+        super().__init__(**kw)
+        self.duree_rampe = float(duree_rampe)
+
+    def _nouvelle_consigne(self, v):
+        if self._vitesse_auto and self.vitesse <= 0 and self.duree_rampe > 0 and v > 0:
+            self.vitesse = v / self.duree_rampe
 
     def _calcul_debit(self, dt, nouveau, maintenant):
         self.mesure = _num(self.dernier.get("volumetric_flow"))

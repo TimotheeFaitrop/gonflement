@@ -195,7 +195,7 @@ def main(fichier_config):
         q = float(p["consigne"])
         rampe = float(p["duree_rampe"])
         controleur = bp.PilotageDebit(
-            consigne=q, vitesse=q / rampe if rampe > 0 else 0,
+            consigne=q, vitesse=q / rampe if rampe > 0 else 0, duree_rampe=rampe,
             duree_palier=float(p["duree_palier"]), attente=float(p["attente"]),
             **commun)
     elif mode == "pression":

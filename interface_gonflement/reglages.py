@@ -67,8 +67,8 @@ DEFAUTS = {
             "ki": 2.0,                    # mL/min par (% . s)
             "kff": 0.0,                   # mL/min par (%/s), anticipation
             "timeout_mesure": 5.0,        # s sans mesure -> débit coupé
-            "methode_3d": "Zernike",      # Zernike | Lagrange
-            "pform": 12,                  # lu dans le nom du dossier nZ_<degré>
+            "methode_3d": "StereoComplex",  # StereoComplex | Zernike | Lagrange (Pycaso)
+            "pform": 10,                  # lu dans le nom du dossier SC_<n> / nZ_<n> / Lpform_<n>
             "fichier_constantes": "",     # results_calib/nZ_<degré>/A_Zernike.npy
             "rotation_droite": True,      # caméra droite en miroir (180°)
         },
@@ -87,8 +87,8 @@ DEFAUTS = {
         # comme Pycaso/calibration_gui.py
         "date": "",                       # vide = aujourd'hui (AAAA_MM_JJ)
         "dossier_images": "",             # vide = <racine>/<date>/<nom>/Mesure
-        "methode": "Lagrange",
-        "pform": "4",
+        "methode": "StereoComplex",
+        "pform": "10",
         "iterations": 10,
         "deplacer_metadata": False,
         "afficher_3d": True,
@@ -154,10 +154,10 @@ def zl(cal):
 
 
 def degre_depuis_chemin(fichier, defaut=None):
-    """nZ_12/A_Zernike.npy -> 12 ; Lpform_4/L_constants.npy -> 4."""
+    """nZ_12/A_Zernike.npy -> 12 ; Lpform_4/L_constants.npy -> 4 ; SC_10/model.json -> 10."""
     import re
     for part in reversed(Path(fichier).parts):
-        m = re.fullmatch(r"(?:nZ|Lpform)_(\d+)", part)
+        m = re.fullmatch(r"(?:nZ|Lpform|SC)_(\d+)", part)
         if m:
             return int(m.group(1))
     return defaut

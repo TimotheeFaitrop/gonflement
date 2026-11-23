@@ -8,9 +8,10 @@
       Pycaso/calibration_gui) ; la liste des hauteurs est notée dans z_list.json.
 
   python lancer_calibration.py calcul config.json
-      Lance la calibration Pycaso (Lagrange / Soloff / Zernike) avec les mêmes
-      paramètres que la fenêtre de 1_calibration.py (date, dossier, z départ,
-      pas, nb plans, méthode, degré, itérations, options).
+      Lance la calibration : StereoComplex (modèle de rayons, ordre de Zernike nmax dans
+      « degré »), ou Pycaso (Lagrange / Soloff / Zernike) avec les mêmes paramètres que la
+      fenêtre de 1_calibration.py (date, dossier, z départ, pas, nb plans, méthode, degré,
+      itérations, options).
 """
 
 import json
@@ -189,7 +190,7 @@ def acquisition(cfg):
 
 EXT_IMAGES = (".tif", ".tiff", ".png", ".bmp", ".jpg", ".jpeg")
 CACHE_PYCASO = ("all_X_", "all_xth_", "nb_pts_")      # détections mises en cache par Pycaso
-TAGS = {"Lagrange": "Lpform_{}", "Soloff": "Spform_{}", "Zernike": "nZ_{}"}
+TAGS = {"Lagrange": "Lpform_{}", "Soloff": "Spform_{}", "Zernike": "nZ_{}", "StereoComplex": "SC_{}"}
 
 
 def images_camera(dossier, cote):
@@ -339,6 +340,31 @@ def resume_detection(resultats, n_plans):
               f"la mire non vu) : plans n° {[r + 1 for r in rejet]}", flush=True)
 
 
+def calcul_stereocomplex(cal, dossier, z, g, d):
+    """Calibration StereoComplex (stereo_complex.py) : modèle de rayons de la paire de caméras,
+    avec le passage au repère de la mire utilisé par tout le reste de la chaîne."""
+    import numpy as np
+    import stereo_complex as scx
+
+    nmax = int(cal["pform"])
+    resultats = Path(dossier).resolve().parent / "results_calib" / TAGS["StereoComplex"].format(nmax)
+    legacy = format_mire(g + d)
+    print(f"Mire au format {'ancien (legacy)' if legacy else 'nouveau'}", flush=True)
+    figures_en_svg()
+    try:
+        bilan = scx.calibrer(dossier, np.asarray(z, float), resultats, nmax=nmax, legacy=legacy)
+    except (RuntimeError, ValueError) as e:
+        sys.exit(f"ERREUR : {e}")
+    print(f"Résultats dans {resultats}")
+    for f in [f for f in FIGURES if "Coord3D" in f] + [f for f in FIGURES if "Retroprojection" in f][-1:]:
+        print(f"FIGURE={FIGURES[f]}|{f}", flush=True)       # aperçu PNG | fichier SVG
+    doc = dossier / DOCUMENT
+    if doc.exists():
+        with open(doc, "a", encoding="utf-8") as f:
+            f.write(f"\nCalcul {time.strftime('%Y-%m-%d %H:%M')} : StereoComplex, nmax {nmax} "
+                    f"(erreur RMS en Z {bilan['rms_z_mm']:.4f} mm) -> {resultats}\n")
+
+
 def calcul(cfg):
     cal = cfg["calibration"]
     dossier = Path(cal["dossier_images"])
@@ -357,6 +383,9 @@ def calcul(cfg):
         sys.exit("ERREUR : Pycaso associe l'image n à la hauteur n : il faut autant d'images "
                  f"à gauche ({len(g)}) et à droite ({len(d)}) que de plans ({len(z)}). "
                  "Corriger Z départ / Z fin / pas, ou le dossier.")
+
+    if cal["methode"] == "StereoComplex":
+        return calcul_stereocomplex(cal, dossier, z, g, d)
 
     import numpy as np
     from Pycaso.calibration_class import Calibration
