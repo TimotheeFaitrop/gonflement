@@ -12,6 +12,8 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk, messagebox, filedialog
 
+from matplotlib import colormaps
+
 from Pycaso.correction_class import Correction
 from Pycaso.deformation_class import Deformation
 from Pycaso.reconstruction_class import Detect3D
@@ -23,6 +25,9 @@ from Pycaso.style_gui import Style
 _PAD = Style.PAD
 _VERT, _ORANGE, _ROUGE, _GRIS = Style.VERT, Style.ORANGE, Style.ROUGE, Style.GRIS
 _AIDE_IMAGES = "ex. 0, 10:20, -1   (a:b = de a à b inclus ; -1 = dernière)"
+# colormaps proposées dans la liste ; n'importe quel autre nom matplotlib peut être tapé (ex. "Spectral", "viridis_r")
+_COLORMAPS = ("viridis", "plasma", "inferno", "magma", "cividis", "turbo", "jet",
+              "coolwarm", "RdBu_r", "seismic", "Spectral_r", "gray")
 
 
 # ----- images -----
@@ -184,6 +189,7 @@ class DeformationGUI:
         self.v["source"].trace_add("write", self._maj)
         self._maj_sources()
         self._maj_calcul()
+        self._maj_carte()
 
     def ask(self):
         """Affiche la fenêtre ; renvoie un Deformation rempli, ou None si annulé."""
@@ -206,9 +212,16 @@ class DeformationGUI:
             "reference_deplacement": tk.StringVar(value=str(d.reference_deplacement)),
             "images": tk.StringVar(value=_ecrire_images(d.images)),
             "sens_z": tk.StringVar(value=next(l for l, v in self.SENS.items() if v == d.inverser_z)),
+            "colormap": tk.StringVar(value=d.colormap),
         }
         for nom, _ in self.CASES:
             self.v[nom] = tk.BooleanVar(value=bool(getattr(d, nom)))
+        # cartographie K3 = f(K2)
+        self.v["carte_k3_k2"] = tk.BooleanVar(value=d.carte_k3_k2)
+        for cle, val in (("carte_debut", d.carte_images[0]), ("carte_fin", d.carte_images[1]),
+                          ("taille_zone", d.taille_zone),
+                         ("bins_k2", d.bins_k2), ("bins_k3", d.bins_k3)):
+            self.v[cle] = tk.StringVar(value=str(val))
         self.v_grandeurs = {g: tk.BooleanVar(value=g in d.grandeurs) for g in Deformation.GRANDEURS}
         self.v_composantes = {c: tk.BooleanVar(value=c in d.composantes) for c in Deformation.COMPOSANTES}
 
@@ -321,13 +334,51 @@ class DeformationGUI:
         ttk.Label(lc, text="(des tenseurs ; yx, zx, zy : seulement pour F, non symétrique ; U trace x, y, z)",
                   foreground=_GRIS).grid(row=0, column=6, sticky="w")
 
-        for i, (nom, lib) in enumerate(self.CASES, start=3):
+        ttk.Label(f, text="Colormap").grid(row=3, column=0, sticky="w", **pad)
+        lm = ttk.Frame(f)
+        lm.grid(row=3, column=1, columnspan=2, sticky="w", **pad)
+        ttk.Combobox(lm, textvariable=self.v["colormap"], values=list(_COLORMAPS), width=14).grid(row=0, column=0)
+        ttk.Label(lm, text="(liste ou nom matplotlib à taper ; sur chaque page, une échelle commune "
+                           "et une seule barre pour tous les graphiques)", foreground=_GRIS).grid(
+            row=0, column=1, padx=(8, 0))
+
+        for i, (nom, lib) in enumerate(self.CASES, start=4):
             ttk.Checkbutton(f, text=lib, variable=self.v[nom]).grid(row=i, column=0, columnspan=3,
                                                                      sticky="w", **pad)
 
+        # --- Cartographie K3 = f(K2) ---
+        f = self._bloc("Cartographie K3 = f(K2), colormap de la fréquence de chaque couple (K2,K3)", 3)
+        ttk.Checkbutton(f, text="Tracer la fréquence (échelle log) des couples (K2, K3) "
+                                "pour chaque zone de chaque frame de l'intervalle",
+                        variable=self.v["carte_k3_k2"], command=self._maj_carte).grid(
+            row=0, column=0, columnspan=3, sticky="w", **pad)
+        self.e_carte = []                     # champs à griser quand la cartographie est décochée
+
+        ttk.Label(f, text="Intervalle d'images").grid(row=1, column=0, sticky="w", **pad)
+        li = ttk.Frame(f)
+        li.grid(row=1, column=1, columnspan=2, sticky="w", **pad)
+        for k, (lib, cle) in enumerate((("de", "carte_debut"), ("à", "carte_fin"))):
+            ttk.Label(li, text=lib).grid(row=0, column=2 * k, padx=(0 if k == 0 else 12, 4))
+            e = ttk.Entry(li, textvariable=self.v[cle], width=6)
+            e.grid(row=0, column=2 * k + 1)
+            self.e_carte.append(e)
+        ttk.Label(li, text="(bornes incluses ; -1 = dernière ; l'image 0 n'a pas de déformation)",
+                  foreground=_GRIS).grid(row=0, column=6, padx=(10, 0))
+
+        ttk.Label(f, text="Cases du graphique").grid(row=3, column=0, sticky="w", **pad)
+        lb = ttk.Frame(f)
+        lb.grid(row=3, column=1, columnspan=2, sticky="w", **pad)
+        for k, (lib, cle) in enumerate((("K2", "bins_k2"), ("K3", "bins_k3"))):
+            ttk.Label(lb, text=lib).grid(row=0, column=2 * k, padx=(0 if k == 0 else 12, 4))
+            e = ttk.Entry(lb, textvariable=self.v[cle], width=6)
+            e.grid(row=0, column=2 * k + 1)
+            self.e_carte.append(e)
+        ttk.Label(lb, text="(finesse des axes K2 / K3 du graphique : 20 = grossier, 150 = fin)",
+                  foreground=_GRIS).grid(row=0, column=4, padx=(10, 0))
+
         # --- Boutons ---
         fb = ttk.Frame(self.root)
-        fb.grid(row=3, column=0, sticky="e", **pad)
+        fb.grid(row=4, column=0, sticky="e", **pad)
         ttk.Button(fb, text="Annuler", command=self.root.destroy).grid(row=0, column=0, **pad)
         ttk.Button(fb, text="Lancer", command=self._on_ok).grid(row=0, column=1, **pad)
         self.root.bind("<Return>", lambda _e: self._on_ok())
@@ -390,6 +441,12 @@ class DeformationGUI:
         self.e_rayon.configure(state="normal" if self.v["masque"].get() == "disque" else "disabled")
         self.lbl_interp.configure(text=self.AIDE_INTERPOLATION.get(interp, ""))
 
+    def _maj_carte(self, *_):
+        """Les champs de la cartographie K3 = f(K2) ne sont actifs que si elle est cochée."""
+        etat = "normal" if self.v["carte_k3_k2"].get() else "disabled"
+        for e in self.e_carte:
+            e.configure(state=etat)
+
     def _choisir_images(self):
         infos = self._courant().infos()
         if infos is None:
@@ -420,6 +477,27 @@ class DeformationGUI:
         ref = self._nombre("reference_deplacement", "Image de référence des déplacements", erreurs, int)
         if self.v["interpolation"].get() == "rbf_polynome" and 0 < voisins < 10:
             erreurs.append("Voisins : 0 (toutes les taches) ou au moins 10")
+        colormap = self.v["colormap"].get().strip() or "viridis"
+        if colormap not in colormaps:
+            erreurs.append(f"Colormap : « {colormap} » inconnue (noms matplotlib : viridis, plasma, coolwarm, "
+                           "RdBu_r, gray... ; ajouter _r pour inverser)")
+
+        # cartographie K3 = f(K2) : lue seulement si cochée (sinon valeurs par défaut de Deformation)
+        carte = {"carte_k3_k2": False}
+        bornes_carte = ()
+        if self.v["carte_k3_k2"].get():
+            debut = self._nombre("carte_debut", "Cartographie : première image", erreurs, int)
+            fin = self._nombre("carte_fin", "Cartographie : dernière image", erreurs, int)
+            pas = 1
+            zone = 1
+            bins_k2 = self._nombre("bins_k2", "Cartographie : cases en K2", erreurs, int, 2, defaut=150)
+            bins_k3 = self._nombre("bins_k3", "Cartographie : cases en K3", erreurs, int, 2, defaut=150)
+
+            if zone > taille:
+                erreurs.append(f"Cartographie : mini-zone ({zone}) plus grande que la grille ({taille} points)")
+            carte = dict(carte_k3_k2=True, carte_images=(debut, fin, pas), taille_zone=zone,
+                         bins_k2=bins_k2, bins_k3=bins_k3)
+            bornes_carte = (debut, fin)
         try:
             images = tuple(_lire_images(self.v["images"].get()))
             if not images:
@@ -438,10 +516,12 @@ class DeformationGUI:
             if infos is None:
                 erreurs.append(f"X3d.txt, Y3d.txt, Z3d.txt introuvables dans {d.dossier_entree}")
             else:
-                hors = [n for n in images + (ref,) if not -infos[0] <= n < infos[0]]
+                hors = [n for n in images + (ref,) + bornes_carte if not -infos[0] <= n < infos[0]]
                 if hors:
                     erreurs.append(f"Images hors limites : {hors} "
                                    f"({infos[0]} images : 0 à {infos[0] - 1})")
+                elif bornes_carte and range(infos[0])[bornes_carte[0]] > range(infos[0])[bornes_carte[1]]:
+                    erreurs.append("Cartographie : la première image doit précéder la dernière")
         if erreurs:
             messagebox.showerror("Paramètres invalides", "\n".join(erreurs), parent=self.root)
             return
@@ -456,7 +536,9 @@ class DeformationGUI:
                                   reference_deplacement=ref,
                                   inverser_z=self.SENS[self.v["sens_z"].get()],
                                   images=images, grandeurs=grandeurs, composantes=composantes,
-                                  **{nom: self.v[nom].get() for nom, _ in self.CASES})
+                                  colormap=colormap,
+                                  **{nom: self.v[nom].get() for nom, _ in self.CASES},
+                                  **carte)
         self.root.destroy()
 
 

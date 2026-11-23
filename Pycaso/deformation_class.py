@@ -15,6 +15,13 @@ construite sur la configuration initiale (image 0) ; on en déduit, pour chaque 
     K2   norme de la partie déviatorique de H : sqrt(dev(H) : dev(H)), dev(H) = H − tr(H)/3 I
     K3   3 sqrt(6) det(dev(H)) / K2³   (−1 ≤ K3 ≤ 1 : type de sollicitation)
 
+Cartographie K3 = f(K2) (option carte_k3_k2, tracée après toutes les autres figures) :
+    la zone initiale est découpée en mini-zones carrées de taille_zone x taille_zone points de grille ;
+    pour chaque image de l'intervalle carte_images et chaque mini-zone, H est moyenné sur la zone
+    puis K2 et K3 en sont déduits. Les couples (K2, K3) de toutes les images et de toutes les zones
+    sont comptés dans un histogramme 2D (K2 > 0 en abscisse, −1 ≤ K3 ≤ 1 en ordonnée), tracé en
+    fréquence avec une échelle de couleur logarithmique.
+
 Organisation des dossiers (dossier_essai = ex. Expériences/<date>/essai1) :
     <essai>/reconstruction/<source>/   X3d.txt, Y3d.txt, Z3d.txt (entrée, source = Lpform_4, nZ_12...)
     <essai>/deformation/<source>/      champs_<n>.npz et figures (sortie)
@@ -26,6 +33,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.colors import LogNorm
 from scipy.interpolate import RBFInterpolator, Rbf, griddata
 
 from Pycaso.reconstruction_class import Detect3D
@@ -90,14 +98,22 @@ class Deformation:
                  images=(-1,),              # indices des images traitées (-1 = dernière)
                  grandeurs=("F",),          # grandeurs tracées (clés de GRANDEURS)
                  composantes=("xx", "yy", "zz"),   # composantes tracées des tenseurs
-                 nuage_3d=False,            # tracer aussi le nuage de points 3D
+                 colormap="viridis",        # colormap de toutes les figures (nom matplotlib : "plasma", "coolwarm", "RdBu_r"...) ;
+                                            # sur une page, toutes les vignettes partagent la même échelle et une seule barre
+                 nuage_3d=False,           # tracer aussi le nuage de points 3D
                  nuage_deplacement=True,    # nuage 3D : tracer z − z(image de référence) plutôt que z
                  reference_deplacement=0,   # image de référence des déplacements U (et du nuage 3D) ;
                                             # les déformations sont toujours calculées / image 0.
                                             # Source corrigée : 0 = état plat, 1 = état serré
                  enregistrer_champs=True,   # champs_<n>.npz : tous les champs de l'image n
                  enregistrer_figures=True,  # figures en .svg
-                 afficher_figures=True):    # ouvrir les figures à l'écran
+                 afficher_figures=True,     # ouvrir les figures à l'écran
+                 # --- Cartographie K3 = f(K2) (après toutes les autres figures) ---
+                 carte_k3_k2=False,         # tracer la fréquence (échelle log) des couples (K2, K3)
+                 carte_images=(0, -1, 1),   # intervalle d'images : (première, dernière incluse, pas) ; -1 = dernière
+                 taille_zone=1,             # côté d'une mini-zone, en points de grille (1 = chaque point, comme les cartes K2 / K3)
+                 bins_k2=150,                # résolution de l'histogramme : nombre de cases sur l'axe K2 (n'a rien de spatial)
+                 bins_k3=150):              # idem sur l'axe K3 (entre -1 et 1)
         for nom, val, choix in (("interpolation", interpolation, self.INTERPOLATIONS),
                                 ("masque", masque, self.MASQUES)):
             if val not in choix:
@@ -135,8 +151,27 @@ class Deformation:
         self.enregistrer_champs = enregistrer_champs
         self.enregistrer_figures = enregistrer_figures
         self.afficher_figures = afficher_figures
+        carte_images = tuple(int(n) for n in carte_images)
+        if len(carte_images) != 3 or carte_images[2] < 1:
+            raise ValueError("carte_images : (première, dernière, pas) avec un pas ≥ 1")
+        if int(taille_zone) < 1:
+            raise ValueError("taille_zone : au moins 1 point de grille")
+        if int(bins_k2) < 2 or int(bins_k3) < 2:
+            raise ValueError("bins_k2 et bins_k3 : au moins 2 cases")
+        try:
+            plt.get_cmap(colormap)
+        except ValueError:
+            raise ValueError(f"colormap inconnue : {colormap!r} (noms matplotlib : viridis, plasma, coolwarm, "
+                             "RdBu_r, gray... ; ajouter _r pour inverser)") from None
+        self.colormap = colormap
+        self.carte_k3_k2 = bool(carte_k3_k2)
+        self.carte_images = carte_images
+        self.taille_zone = int(taille_zone)
+        self.bins_k2 = int(bins_k2)
+        self.bins_k3 = int(bins_k3)
+        self.carte = None
 
-    RESULTATS = ("X", "Y", "Z", "grille", "champs", "z_inverse",  "_r_ref")
+    RESULTATS = ("X", "Y", "Z", "grille", "champs", "z_inverse",  "_r_ref", "carte")
 
     def parametres(self):
         """Paramètres sous forme de dictionnaire (pour affichage)."""
@@ -218,6 +253,10 @@ class Deformation:
                     self.tracer_nuage(num)
                 for g in self.grandeurs:
                     self.tracer(num, g)
+
+        if self.carte_k3_k2:                      # en dernier, après tous les autres tracés
+            self.carte = self.calculer_carte_k3_k2()
+            self.tracer_carte_k3_k2()
         return self.champs
 
     def charger(self):
@@ -352,6 +391,114 @@ class Deformation:
         champs["masque"] = ~invalide
         return champs
 
+    # ----- cartographie K3 = f(K2) -----
+
+    def images_carte_resolues(self):
+        """Numéros d'images de l'intervalle carte_images (première, dernière incluse, pas)."""
+        nb = len(self.X)
+        debut, fin, pas = self.carte_images
+        debut, fin = range(nb)[debut], range(nb)[fin]          # IndexError si hors limites ; -1 = dernière
+        if debut > fin:
+            raise ValueError(f"carte_images : première image ({debut}) après la dernière ({fin})")
+        return list(range(debut, fin + 1, pas))
+
+    @staticmethod
+    def _k2_k3(H):
+        """K2 et K3 de la partie déviatorique de H (deux derniers axes) ; K3 est borné à [-1, 1]
+        (écarts d'arrondi) et vaut NaN là où K2 ≈ 0 (sollicitation indéfinie)."""
+        dev = H - (np.trace(H, axis1=-2, axis2=-1) / 3)[..., None, None] * np.eye(3)
+        K2 = np.sqrt(np.sum(dev * dev, axis=(-2, -1)))
+        with np.errstate(invalid="ignore", divide="ignore"):
+            K3 = np.clip(3 * np.sqrt(6) * np.linalg.det(dev) / K2 ** 3, -1, 1)
+        K3[~(K2 > 1e-12)] = np.nan
+        return K2, K3
+
+    def _zones(self, champs):
+        """K2 et K3 de chaque mini-zone (carré de taille_zone x taille_zone points de grille).
+
+        H est moyenné sur les points valides de la zone, puis K2 et K3 sont calculés sur ce H moyen ;
+        les zones dont moins de la moitié des points sont dans le masque valent NaN. Les points
+        de grille en trop sur les bords (n non multiple de taille_zone) sont ignorés.
+        """
+        s = self.taille_zone
+        ok = champs["masque"]
+        nzy, nzx = ok.shape[0] // s, ok.shape[1] // s
+        if nzy < 1 or nzx < 1:
+            raise ValueError(f"taille_zone ({s}) plus grande que la grille {ok.shape}")
+        my, mx = nzy * s, nzx * s
+        H = np.where(ok[..., None, None], champs["H"], 0.0)[:my, :mx]
+        Hz = H.reshape(nzy, s, nzx, s, 3, 3).sum(axis=(1, 3))
+        valides = ok[:my, :mx].reshape(nzy, s, nzx, s).sum(axis=(1, 3))
+        with np.errstate(invalid="ignore", divide="ignore"):
+            Hz = Hz / valides[..., None, None]
+        Hz[valides < 0.5 * s * s] = np.nan
+        return self._k2_k3(Hz)
+
+    def calculer_carte_k3_k2(self):
+        """K2 et K3 de chaque mini-zone pour chaque image de l'intervalle, puis histogramme 2D.
+
+        Les images déjà calculées (self.champs) sont réutilisées, les autres sont calculées
+        à la volée (sans être conservées). Renvoie un dictionnaire (None si aucun couple valide) :
+            images         numéros d'images
+            K2, K3         tableaux (images, zones_y, zones_x), NaN hors masque
+            bords_k2/k3    bords des cases de l'histogramme
+            frequence      (bins_k2, bins_k3) : nombre de couples / nombre total de couples valides
+            nb_couples     nombre de couples (K2 > 0, K3 défini) sur toutes les images et toutes les zones
+        """
+        images = self.images_carte_resolues()
+        k2s, k3s = [], []
+        for i, num in enumerate(images):
+            print(f"Cartographie K3(K2) : image {num} ({i + 1} / {len(images)})", end="\r")
+            champs = self.champs[num] if num in self.champs else self.calculer(num)
+            k2, k3 = self._zones(champs)
+            k2s.append(k2)
+            k3s.append(k3)
+        print()
+        k2, k3 = np.stack(k2s), np.stack(k3s)
+        valide = np.isfinite(k2) & np.isfinite(k3) & (k2 > 0)
+        if not valide.any():
+            print("Cartographie K3(K2) : aucune mini-zone avec K2 > 0 (image 0 seule ? déformation nulle ?)")
+            return None
+        k2_max = float(k2[valide].max())
+        bords_k2 = np.linspace(0, k2_max, self.bins_k2 + 1)
+        bords_k3 = np.linspace(-1, 1, self.bins_k3 + 1)
+        comptes, _, _ = np.histogram2d(k2[valide], k3[valide], bins=(bords_k2, bords_k3))
+        return {"images": np.array(images), "K2": k2, "K3": k3,
+                "bords_k2": bords_k2, "bords_k3": bords_k3,
+                "frequence": comptes / valide.sum(), "nb_couples": int(valide.sum())}
+
+    def tracer_carte_k3_k2(self):
+        """Carte de la fréquence des couples (K2, K3) : K2 > 0 en abscisse, -1 ≤ K3 ≤ 1 en ordonnée,
+        couleur = fréquence en échelle logarithmique (cases vides en blanc)."""
+        c = self.carte
+        if c is None:
+            return
+        nb = len(self.X)
+        if self.enregistrer_champs:
+            np.savez_compressed(self.dossier_sortie / "carte_K3_K2.npz", **c)
+            print(f"Cartographie K3(K2) enregistrée dans {self.dossier_sortie} (carte_K3_K2.npz)")
+        if not (self.enregistrer_figures or self.afficher_figures):
+            return
+        freq = np.ma.masked_equal(c["frequence"], 0)
+        if freq.count() == 0:                       # tout hors de [0, inf]
+            print("Cartographie K3(K2) : aucun couple dans l'intervalle de K2 demandé, rien à tracer")
+            return
+        cmap = plt.get_cmap(self.colormap).copy()
+        cmap.set_bad("white")
+        fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
+        im = ax.pcolormesh(c["bords_k2"], c["bords_k3"], freq.T, cmap=cmap,
+                           norm=LogNorm(vmin=freq.min(), vmax=freq.max()))
+        ax.set_xlim(c["bords_k2"][0], c["bords_k2"][-1])
+        ax.set_ylim(-1, 1)
+        ax.set_xlabel("K2")
+        ax.set_ylabel("K3")
+        ax.grid(alpha=0.3)
+        fig.colorbar(im, ax=ax, label="Fréquence (échelle log)")
+        images = c["images"]
+        ax.set_title(f"K3 = f(K2) - {self.source}\nimages {images[0]} à {images[-1]}, "
+                     f"{c['nb_couples']} couples")
+        self._finir_figure(fig, f"Carte_K3_K2_{images[0]}a{images[-1]}-{nb}.svg")
+
     # ----- figures -----
 
     def _finir_figure(self, fig, nom):
@@ -379,17 +526,23 @@ class Deformation:
         if not vignettes:
             return
 
+        # échelle de couleur unique pour toutes les vignettes de la page (comparables entre elles)
+        toutes = np.concatenate([np.ravel(carte) for _, carte in vignettes])
+        toutes = toutes[np.isfinite(toutes)]
+        vmin, vmax = (toutes.min(), toutes.max()) if toutes.size else (None, None)
+
         nb_col = min(len(vignettes), self.VIGNETTES_PAR_LIGNE)
         nb_lig = -(-len(vignettes) // nb_col)                  # division arrondie au-dessus
         fig, axes = plt.subplots(nb_lig, nb_col, figsize=(5.5 * nb_col + 1, 5.5 * nb_lig),
                                  squeeze=False, layout="constrained")
         axes = axes.ravel()
         for ax, (nom, carte) in zip(axes, vignettes):
-            im = ax.imshow(carte, extent=self.grille["etendue"], origin="upper", cmap="viridis")
+            im = ax.imshow(carte, extent=self.grille["etendue"], origin="upper", cmap=self.colormap,
+                           vmin=vmin, vmax=vmax)
             ax.set_title(nom)
             ax.set_xlabel("X (mm)"); ax.set_ylabel("Y (mm)")
             ax.set_aspect("equal")
-            fig.colorbar(im, ax=ax, shrink=0.8)
+        fig.colorbar(im, ax=list(axes[:len(vignettes)]), shrink=0.8)     # une seule barre pour la page
         for ax in axes[len(vignettes):]:                       # cases vides de la dernière ligne
             ax.set_visible(False)
         fig.suptitle(f"{titre} - {self.source} - image {num} / {nb - 1}")
@@ -405,7 +558,7 @@ class Deformation:
         fig = plt.figure(figsize=(16, 9))
         ax = plt.axes(projection="3d")
         ax.grid(visible=True, color="grey", linestyle="-.", linewidth=0.3, alpha=0.2)
-        sctt = ax.scatter3D(x[ok], y[ok], z[ok], alpha=0.8, c=z[ok], cmap="viridis")
+        sctt = ax.scatter3D(x[ok], y[ok], z[ok], alpha=0.8, c=z[ok], cmap=self.colormap)
         ax.set_xlabel("x (mm)", fontweight="bold")
         ax.set_ylabel("y (mm)", fontweight="bold")
         ax.set_zlabel("z (mm)", fontweight="bold")
