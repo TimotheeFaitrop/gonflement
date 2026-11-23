@@ -97,10 +97,13 @@ class Anisotropie:
                  niveau_min=0.40,           # fraction du déplacement z max
                  niveau_max=1.00,
                  pas_niveau=0.01,
-                 tolerance=0.05,            # demi-épaisseur (mm) de la bande gardée autour du niveau
+                 tolerance=0.05,            # demi-épaisseur (mm) de la bande gardée autour du niveau (grille)
+                 tolerance_reelle=0.20,     # idem quand points_reels=True (taches peu nombreuses)
                  inverser_z=None,           # None = auto (dôme vers le haut), True / False = forcé
                  reference_deplacement=0,   # Uz = z − z(image de référence) ; source corrigée : 0 = état plat,
                                             # 1 = état serré
+                 points_reels=False,        # False = points d'une grille interpolée (comme avant) ;
+                                            # True = uniquement les taches réellement mesurées
                  # --- Résultats ---
                  tracer_ellipses=True,      # vue de dessus : points des niveaux et ellipses
                  tracer_surface=False,      # surface 3D avec les ellipses
@@ -109,8 +112,8 @@ class Anisotropie:
                  afficher_figures=True):
         if not 0 < niveau_min <= niveau_max <= 1:
             raise ValueError("Il faut 0 < niveau_min ≤ niveau_max ≤ 1")
-        if not pas_niveau > 0 or not tolerance > 0:
-            raise ValueError("pas_niveau et tolerance doivent être > 0")
+        if not pas_niveau > 0 or not tolerance > 0 or not tolerance_reelle > 0:
+            raise ValueError("pas_niveau, tolerance et tolerance_reelle doivent être > 0")
         # Deformation porte les chemins, la grille et l'interpolation (et vérifie les options)
         self.deformation = Deformation(dossier_essai=dossier_essai, source=source,
                                        taille_grille=taille_grille, interpolation=interpolation,
@@ -126,8 +129,10 @@ class Anisotropie:
         self.exclusions_manuelles = d.exclusions_manuelles
         self.niveau_min, self.niveau_max, self.pas_niveau = niveau_min, niveau_max, pas_niveau
         self.tolerance = tolerance
+        self.tolerance_reelle = tolerance_reelle
         self.inverser_z = inverser_z
         self.reference_deplacement = int(reference_deplacement)
+        self.points_reels = bool(points_reels)
         self.tracer_ellipses = tracer_ellipses
         self.tracer_surface = tracer_surface
         self.enregistrer_resultats = enregistrer_resultats
@@ -158,6 +163,11 @@ class Anisotropie:
         return self.deformation.infos()
 
     @property
+    def tol(self):
+        """Tolérance utilisée : tolerance (grille) ou tolerance_reelle (points réels)."""
+        return self.tolerance_reelle if self.points_reels else self.tolerance
+
+    @property
     def niveaux(self):
         n = int(round((self.niveau_max - self.niveau_min) / self.pas_niveau)) + 1
         return np.round(self.niveau_min + self.pas_niveau * np.arange(n), 10)
@@ -183,7 +193,9 @@ class Anisotropie:
             self.dossier_sortie.mkdir(parents=True, exist_ok=True)
 
         ref = range(nb)[self.reference_deplacement]
-        r0 = d.interpoler(ref)
+        r0 = None if self.points_reels else d.interpoler(ref)
+        print("Points : " + ("taches réellement mesurées" if self.points_reels
+                             else "grille interpolée"))
         if ref:
             print(f"Uz compté depuis l'image {ref}")
         self.resultats = {}
@@ -213,39 +225,63 @@ class Anisotropie:
 
     # ----- calcul -----
 
+    def _points_reels(self, num, ref):
+        """Taches mesurées de l'image num, dans le masque : (x, y actuels, Uz)."""
+        d = self.deformation
+        x0, y0 = d.X[0], d.Y[0]
+        x, y = d.X[num], d.Y[num]
+        uz = d.Z[num] - d.Z[ref]
+        ok = (np.isfinite(x0) & np.isfinite(y0) & np.isfinite(x) & np.isfinite(y) & np.isfinite(uz))
+        if d.masque == "disque":            # même disque que la grille (défini sur les positions initiales)
+            g = d.grille
+            n = g["X"].shape[0]
+            xc, yc = g["X"][n // 2, n // 2], g["Y"][n // 2, n // 2]
+            xmin, xmax = g["etendue"][:2]
+            ok &= (x0 - xc) ** 2 + (y0 - yc) ** 2 <= (d.rayon_masque * (xmax - xmin) / 2) ** 2
+        elif d.masque == "enveloppe":       # taches initiales dans leur enveloppe convexe : toutes
+            pass
+        return x[ok], y[ok], uz[ok]
+
     def analyser(self, num, r0=None):
         """Ellipses de tous les niveaux pour l'image num."""
         d = self.deformation
-        r = d.interpoler(num)
-        if r0 is None:
-            r0 = d.interpoler(range(len(d.X))[self.reference_deplacement])
-        dedans = d.grille["dedans"] & np.isfinite(r).all(axis=-1) & np.isfinite(r0).all(axis=-1)
-        uz = r[..., 2] - r0[..., 2]
+        ref = range(len(d.X))[self.reference_deplacement]
+        if self.points_reels:               # taches mesurées, sans grille ni interpolation
+            x, y, uz = self._points_reels(num, ref)
+            r = None
+            valide = np.isfinite(uz)
+        else:
+            r = d.interpoler(num)
+            if r0 is None:
+                r0 = d.interpoler(ref)
+            dedans = d.grille["dedans"] & np.isfinite(r).all(axis=-1) & np.isfinite(r0).all(axis=-1)
+            uz = np.where(dedans, r[..., 2] - r0[..., 2], np.nan)
+            x, y = r[..., 0], r[..., 1]
+            valide = dedans
         inverse = self.inverser_z
         if inverse is None:                 # auto : le dôme doit monter
-            inverse = bool(np.nanmax(-uz[dedans]) > np.nanmax(uz[dedans]))
+            inverse = bool(np.nanmax(-uz[valide]) > np.nanmax(uz[valide]))
         if inverse:
             uz = -uz
-        uz = np.where(dedans, uz, np.nan)
         zmax = np.nanmax(uz)
 
         lignes, points = [], {}
         for p in self.niveaux:
             zn = p * zmax
-            w = np.abs(uz - zn) <= self.tolerance
-            x, y = r[..., 0][w], r[..., 1][w]
-            e = ajuster_ellipse(x, y)
+            w = np.abs(uz - zn) <= self.tol
+            e = ajuster_ellipse(x[w], y[w])
             if e is None:
                 continue
             xc, yc, a, b, angle = e
-            lignes.append((p, zn, a, b, b / a, angle, xc, yc, len(x)))
-            points[p] = (x, y)
+            lignes.append((p, zn, a, b, b / a, angle, xc, yc, int(w.sum())))
+            points[p] = (x[w], y[w])
         tableau = np.array(lignes, dtype=float).reshape(-1, len(self.COLONNES))
         pente = ordonnee = None
         if len(tableau) >= 2:
             pente, ordonnee = np.polyfit(tableau[:, 0], tableau[:, 4], 1)
         return {"tableau": tableau, "pente": pente, "ordonnee": ordonnee, "inverse": inverse,
-                "zmax": zmax, "uz": uz, "r": r, "points": points}
+                "zmax": zmax, "uz": uz, "r": r, "points": points,
+                "reel": self.points_reels, "xy": (x, y)}
 
     def diagnostic(self, res):
         """Explique dans le terminal pourquoi des niveaux n'ont pas pu être ajustés."""
@@ -257,7 +293,7 @@ class Anisotropie:
         nb_niv = len(self.niveaux)
         if len(res["tableau"]) == nb_niv:
             return
-        bandes = [int((np.abs(uz - p * zmax) <= self.tolerance).sum()) for p in self.niveaux]
+        bandes = [int((np.abs(uz - p * zmax) <= self.tol).sum()) for p in self.niveaux]
         print(f"  Uz max = {zmax:.3g} mm, 99e centile = {p99:.3g} mm, Uz min = {np.nanmin(uz):.3g} mm ; "
               f"points par bande : min {min(bandes)}, médiane {int(np.median(bandes))}, max {max(bandes)}")
         if zmax > 1.5 * p99 > 0:
@@ -266,8 +302,10 @@ class Anisotropie:
         elif zmax <= 0:
             print("  ⚠ Uz max ≤ 0 : le dôme est vers le bas, essayer « Sens de z » = inverser.")
         elif max(bandes) < 6:
-            print(f"  ⚠ bandes presque vides : tolérance ({self.tolerance:g} mm) trop petite pour "
-                  f"Uz max = {zmax:.3g} mm, ou grille trop grossière.")
+            print(f"  ⚠ bandes presque vides : tolérance ({self.tol:g} mm) trop petite pour "
+                  f"Uz max = {zmax:.3g} mm, "
+                  + ("ou trop peu de taches (augmenter la tolérance ou le pas)." if self.points_reels
+                     else "ou grille trop grossière."))
 
     # ----- figures -----
 
@@ -339,7 +377,12 @@ class Anisotropie:
         r, uz = res["r"], res["uz"]
         fig = plt.figure(figsize=(16, 9))
         ax = plt.axes(projection="3d")
-        surf = ax.plot_surface(r[..., 0], r[..., 1], uz, cmap="viridis", alpha=0.6, linewidth=0)
+        if res["reel"]:                     # taches mesurées : nuage de points
+            x, y = res["xy"]
+            ok = np.isfinite(uz)
+            surf = ax.scatter3D(x[ok], y[ok], uz[ok], c=uz[ok], cmap="viridis", s=8)
+        else:
+            surf = ax.plot_surface(r[..., 0], r[..., 1], uz, cmap="viridis", alpha=0.6, linewidth=0)
         t = np.linspace(0, 2 * np.pi, 120)
         for p, zn, a, b, angle, xc, yc in self._ellipses(num):
             th = np.radians(angle)

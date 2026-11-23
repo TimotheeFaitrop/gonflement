@@ -171,6 +171,8 @@ class AnisotropieGUI:
         "griddata": "linéaire par triangles : très rapide",
     }
     SENS = {"auto (dôme vers le haut)": None, "inverser": True, "garder": False}
+    POINTS = {"interpolés sur une grille": False,
+              "points réels (taches mesurées)": True}
     PAD = _PAD
 
     def __init__(self):
@@ -198,7 +200,9 @@ class AnisotropieGUI:
 
     def _creer_variables(self, a):
         sens = next(lib for lib, val in self.SENS.items() if val == a.inverser_z)
+        points = next(lib for lib, val in self.POINTS.items() if val == a.points_reels)
         self.v = {
+            "points": tk.StringVar(value=points),
             "dossier_essai": tk.StringVar(value=_essai_recent(Detect3D.DOSSIER_PARCOURIR, a.dossier_essai)),
             "source": tk.StringVar(value=a.source),
             "images": tk.StringVar(value=_ecrire_images(a.images)),
@@ -214,6 +218,7 @@ class AnisotropieGUI:
             "niveau_max": tk.StringVar(value=f"{a.niveau_max:g}"),
             "pas_niveau": tk.StringVar(value=f"{a.pas_niveau:g}"),
             "tolerance": tk.StringVar(value=f"{a.tolerance:g}"),
+            "tolerance_reelle": tk.StringVar(value=f"{a.tolerance_reelle:g}"),
             "sens_z": tk.StringVar(value=sens),
         }
         for nom, _ in self.CASES:
@@ -257,14 +262,15 @@ class AnisotropieGUI:
         # --- Grille et interpolation ---
         f = self._bloc("Grille et interpolation", 1)
         ttk.Label(f, text="Taille de la grille").grid(row=0, column=0, sticky="w", **pad)
-        ttk.Entry(f, textvariable=self.v["taille_grille"], width=16).grid(row=0, column=1, sticky="w", **pad)
+        self.e_taille = ttk.Entry(f, textvariable=self.v["taille_grille"], width=16)
+        self.e_taille.grid(row=0, column=1, sticky="w", **pad)
         self._aide(f, "points par côté", 0)
 
         ttk.Label(f, text="Interpolation").grid(row=1, column=0, sticky="w", **pad)
-        cb = ttk.Combobox(f, textvariable=self.v["interpolation"], state="readonly",
-                          values=list(Deformation.INTERPOLATIONS), width=14)
-        cb.grid(row=1, column=1, sticky="w", **pad)
-        cb.bind("<<ComboboxSelected>>", self._changer_interpolation)
+        self.cb_interp = ttk.Combobox(f, textvariable=self.v["interpolation"], state="readonly",
+                                      values=list(Deformation.INTERPOLATIONS), width=14)
+        self.cb_interp.grid(row=1, column=1, sticky="w", **pad)
+        self.cb_interp.bind("<<ComboboxSelected>>", self._changer_interpolation)
         self.lbl_interp = self._aide(f, "", 1)
 
         ttk.Label(f, text="Fonction radiale").grid(row=2, column=0, sticky="w", **pad)
@@ -294,6 +300,12 @@ class AnisotropieGUI:
         ttk.Label(lm, text="× demi-largeur de la zone initiale (disque)",
                   foreground=_GRIS).grid(row=0, column=2, padx=(8, 0))
 
+        ttk.Label(f, text="Points utilisés").grid(row=4, column=0, sticky="w", **pad)
+        cb = ttk.Combobox(f, textvariable=self.v["points"], state="readonly",
+                          values=list(self.POINTS), width=36)
+        cb.grid(row=4, column=1, columnspan=2, sticky="w", **pad)
+        cb.bind("<<ComboboxSelected>>", self._maj_calcul)
+
         # --- Niveaux ---
         f = self._bloc("Niveaux du déplacement z", 2)
         ttk.Label(f, text="Niveaux (fraction de Uz max)").grid(row=0, column=0, sticky="w", **pad)
@@ -304,9 +316,11 @@ class AnisotropieGUI:
             ttk.Entry(ln, textvariable=self.v[cle], width=8).grid(row=0, column=2 * j + 1)
         self.lbl_niveaux = ttk.Label(ln, foreground=_GRIS)
         self.lbl_niveaux.grid(row=0, column=6, padx=(12, 0))
-        ttk.Label(f, text="Tolérance (mm)").grid(row=1, column=0, sticky="w", **pad)
-        ttk.Entry(f, textvariable=self.v["tolerance"], width=16).grid(row=1, column=1, sticky="w", **pad)
-        self._aide(f, "points gardés : |Uz − niveau·Uz max| ≤ tolérance", 1)
+        self.lbl_tol_nom = ttk.Label(f, text="Tolérance (mm)")
+        self.lbl_tol_nom.grid(row=1, column=0, sticky="w", **pad)
+        self.e_tol = ttk.Entry(f, textvariable=self.v["tolerance"], width=16)
+        self.e_tol.grid(row=1, column=1, sticky="w", **pad)
+        self.lbl_tol = self._aide(f, "", 1)
         ttk.Label(f, text="Sens de z").grid(row=2, column=0, sticky="w", **pad)
         ttk.Combobox(f, textvariable=self.v["sens_z"], state="readonly", values=list(self.SENS),
                      width=22).grid(row=2, column=1, sticky="w", **pad)
@@ -386,14 +400,25 @@ class AnisotropieGUI:
         self._maj_calcul()
 
     def _maj_calcul(self, *_):
-        """Active seulement les champs utiles pour l'interpolation et le masque choisis."""
+        """Active seulement les champs utiles pour les points, l'interpolation et le masque choisis."""
+        reels = self.POINTS[self.v["points"].get()]
         interp = self.v["interpolation"].get()
         fonctions = Deformation.INTERPOLATIONS[interp]
-        self.cb_fonction.configure(values=list(fonctions), state="readonly" if fonctions else "disabled")
-        self.e_lissage.configure(state="normal" if fonctions else "disabled")
-        self.e_voisins.configure(state="normal" if interp == "rbf_polynome" else "disabled")
+        grille = not reels                      # grille et interpolation : inutiles avec les points réels
+        self.e_taille.configure(state="normal" if grille else "disabled")
+        self.cb_interp.configure(state="readonly" if grille else "disabled")
+        self.cb_fonction.configure(values=list(fonctions),
+                                   state="readonly" if fonctions and grille else "disabled")
+        self.e_lissage.configure(state="normal" if fonctions and grille else "disabled")
+        self.e_voisins.configure(state="normal" if interp == "rbf_polynome" and grille else "disabled")
         self.e_rayon.configure(state="normal" if self.v["masque"].get() == "disque" else "disabled")
-        self.lbl_interp.configure(text=self.AIDE_INTERPOLATION.get(interp, ""))
+        self.lbl_interp.configure(text="" if reels else self.AIDE_INTERPOLATION.get(interp, ""))
+        # une tolérance mémorisée par mode : on garde ce que l'utilisateur a saisi pour chacun
+        self.e_tol.configure(textvariable=self.v["tolerance_reelle" if reels else "tolerance"])
+        self.lbl_tol_nom.configure(text="Tolérance, taches (mm)" if reels else "Tolérance, grille (mm)")
+        self.lbl_tol.configure(
+            text=("taches réelles : en général 0,1 à 0,3 mm (peu de taches par bande)" if reels
+                  else "points gardés : |Uz − niveau·Uz max| ≤ tolérance"))
 
     def _choisir_images(self):
         infos = self._courant().infos()
@@ -428,7 +453,9 @@ class AnisotropieGUI:
         nmin = self._nombre("niveau_min", "Niveau de départ", erreurs, float, 0, strict=True, defaut=0.4)
         nmax = self._nombre("niveau_max", "Niveau de fin", erreurs, float, 0, strict=True, defaut=0.8)
         pas = self._nombre("pas_niveau", "Pas des niveaux", erreurs, float, 0, strict=True, defaut=0.01)
-        tol = self._nombre("tolerance", "Tolérance", erreurs, float, 0, strict=True, defaut=0.05)
+        tol = self._nombre("tolerance", "Tolérance (grille)", erreurs, float, 0, strict=True, defaut=0.05)
+        tol_reelle = self._nombre("tolerance_reelle", "Tolérance (taches)", erreurs, float, 0,
+                                  strict=True, defaut=0.2)
         if not nmin <= nmax <= 1:
             erreurs.append("Niveaux : il faut départ ≤ fin ≤ 1")
         try:
@@ -463,7 +490,9 @@ class AnisotropieGUI:
                                   masque=self.v["masque"].get(), rayon_masque=rayon,
                                   reference_deplacement=ref,
                                   niveau_min=nmin, niveau_max=nmax, pas_niveau=pas, tolerance=tol,
+                                  tolerance_reelle=tol_reelle,
                                   inverser_z=self.SENS[self.v["sens_z"].get()],
+                                  points_reels=self.POINTS[self.v["points"].get()],
                                   **{nom: self.v[nom].get() for nom, _ in self.CASES})
         self.root.destroy()
 
