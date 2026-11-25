@@ -6,7 +6,7 @@ classe, la méthode d'étalonnage est un paramètre.
 Organisation des dossiers (dossier_essai = ex. Expériences/<date>/essai1, choisi par l'utilisateur) :
     <date>/essai1/appariemment_et_suivi/Lp_final.npy   taches appariées (entrée)
     <date>/essai1/reconstruction/Lpform_4/             résultats 3D (X3d.txt, Y3d.txt, Z3d.txt, figures)
-    <date>/essai1/reconstruction/Lpform_4/Gonflement.gif   GIF du gonflement (méthode gif)
+    <date>/essai1/reconstruction/SC_10/Gonflement.gif      GIF du gonflement (méthode gif)
     <date>/essai1/mesure/                              images (seulement pour Zernike : taille des caméras)
     <date>/Results_Calib/Lpform_4/                     étalonnage, cherché dans l'essai puis ses parents
 Les noms des sous-dossiers sont des constantes de la classe (SOUS_DOSSIER_*).
@@ -32,11 +32,23 @@ from Pycaso import data_library as data
 from Pycaso.calibration_class import Calibration   # dimensions de la mire (Zernike)
 
 
+def _modele_stereocomplex(dossier):
+    """Modèle StereoComplex d'un dossier SC_<n> (voir interface_gonflement/stereo_complex.py)."""
+    try:
+        from interface_gonflement.stereo_complex import Modele3D
+    except ImportError:                 # lancé depuis un autre dossier que la racine du projet
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "interface_gonflement"))
+        from stereo_complex import Modele3D
+    return Modele3D(dossier)
+
+
 class Detect3D:
     """Coordonnées 3D de toutes les taches, pour toutes les images."""
 
     # méthode : (sous-dossier de l'étalonnage, fichiers de constantes, degré par défaut)
     METHODES = {
+        "StereoComplex": ("SC_{}", ("model.json", "repere_mire.npz", "weights.npz"), 10),
         "Lagrange": ("Lpform_{}", ("L_constants.npy",), 4),
         "Soloff":   ("Spform_{}", ("S_constants0.npy", "S_constants.npy"), 555),
         "Zernike":  ("nZ_{}",     ("A_Zernike.npy",), 12),
@@ -55,7 +67,8 @@ class Detect3D:
                  # --- Essai à traiter ---
                  dossier_essai=None,        # ex. ../../Expériences/2026_10_29/essai1 ; None = <aujourd'hui>/essai1
                  # --- Étalonnage ---
-                 methode="Lagrange",        # "Lagrange", "Soloff" ou "Zernike"
+                 methode="StereoComplex",   # "StereoComplex" (interface de la machine) ou Pycaso :
+                                            # "Lagrange", "Soloff", "Zernike"
                  degre=None,                # degré du polynôme ; None = valeur par défaut de la méthode
                  dossier_calib=None,        # dossier d'étalonnage (results_calib) à utiliser en priorité ;
                                             # None = Results_Calib cherché dans l'essai puis au-dessus
@@ -132,7 +145,7 @@ class Detect3D:
 
     @property
     def tag(self):
-        """Nom du sous-dossier de la méthode : Lpform_4, Spform_555, nZ_12..."""
+        """Nom du sous-dossier de la méthode : SC_10, Lpform_4, Spform_555, nZ_12..."""
         return self.METHODES[self.methode][0].format(self.degre)
 
     @property
@@ -232,6 +245,8 @@ class Detect3D:
                                     f"({', '.join(self.METHODES[self.methode][1])}).\nCherché :\n  "
                                     + "\n  ".join(cherches))
         print(f"Étalonnage {self.methode} : {d}")
+        if self.methode == "StereoComplex":     # modèle de rayons + passage au repère de la mire
+            return [_modele_stereocomplex(d)]
         constantes = [np.load(d / f) for f in self.METHODES[self.methode][1]]
         if self.methode == "Zernike":
             constantes.append(self.taille_cameras(d))
@@ -248,6 +263,9 @@ class Detect3D:
 
     def identifier(self, gauche, droite, constantes):
         """Points 3D (x, y, z) des taches d'une image."""
+        if self.methode == "StereoComplex":
+            (modele,) = constantes
+            return modele.triangulation(gauche, droite)
         if self.methode == "Lagrange":
             (L_constants,) = constantes
             return pcs.Lagrange_identification(gauche, droite, L_constants, self.degre)

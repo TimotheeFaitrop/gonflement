@@ -650,7 +650,7 @@ def Soloff_calibration (z_list : np.ndarray,
                 # plt.xlabel('z theoretical (mm)')
                 plt.title("Erreur de rétroprojection (Soloff) : iteration N°"+str(it+1), size=17)
                 plt.xlabel('z théorique (mm)', size=17)
-                plt.ylabel('$\Delta$z (px)', size=17)
+                plt.ylabel(r'$\Delta$z (px)', size=17)
                 plt.savefig(save_retro+'Retroprojection_error_Soloff_iteration'+str(it+1)+'.pdf', dpi = 500)
                 plt.close()
                             
@@ -696,7 +696,7 @@ def Soloff_calibration (z_list : np.ndarray,
         # each camera
         x, Xc1, Xc2 = data.camera_coordinates(all_X, all_xth, z_points)     
         np.save(save_calib + '3D_coordinates_Soloff.npy', x)
-        print(f"\n\Saving the 3D file in {save_calib + '3D_coordinates_Soloff.npy'}\n")
+        print(f"\nSaving the 3D file in {save_calib + '3D_coordinates_Soloff.npy'}\n")
         # Calcul of the Soloff polynome's constants. X = A . M
         Magnification = np.zeros((2, 2))
         for camera in [1, 2] :
@@ -866,7 +866,7 @@ def Lagrange_calibration (z_list : np.ndarray,
                 # plt.xlabel('z theoretical (mm)')
                 plt.title("Erreur de rétroprojection (de Lagrange) : iteration N°"+str(it+1), size=17)
                 plt.xlabel('z théorique (mm)', size=17)
-                plt.ylabel('$\Delta$z (px)', size=17)
+                plt.ylabel(r'$\Delta$z (px)', size=17)
                 plt.savefig(save_retro+'Retroprojection_error_Lagrange_iteration'+str(it+1)+'.pdf', dpi = 500)
                 plt.close()
                 
@@ -910,7 +910,7 @@ def Lagrange_calibration (z_list : np.ndarray,
         # each camera
         x, Xc1, Xc2 = data.camera_coordinates(all_X, all_xth, z_points)
         np.save(save_calib + '3D_coordinates_Lagrange.npy', x)
-        print(f"\n\Saving the 3D file in {save_calib + '3D_coordinates_Lagrange.npy'}\n")
+        print(f"\nSaving the 3D file in {save_calib + '3D_coordinates_Lagrange.npy'}\n")
         # Calcul of the Lagrange polynome's constants. X = A . M
         # Do the system x = Ap*M, where M is the monomial of the real 
         # coordinates of crosses and x the image coordinates, and M the unknow
@@ -1045,7 +1045,7 @@ def Zernike_calibration (z_list : np.ndarray,
             # each camera
             x, Xc1, Xc2 = data.camera_coordinates(all_X, all_xth, z_points)
             np.save(save_calib + '3D_coordinates_Zernike.npy', x)
-            print(f"\n\Saving the 3D file in {save_calib + '3D_coordinates_Zernike.npy'}\n")
+            print(f"\nSaving the 3D file in {save_calib + '3D_coordinates_Zernike.npy'}\n")
             # Calcul of the Zernike polynome's constants. X = A . M
             # Do the system x = Ap*M, where M is the monomial of the real 
             # coordinates of crosses and x the image coordinates, and M the unknow
@@ -1088,7 +1088,7 @@ def Zernike_calibration (z_list : np.ndarray,
                 # plt.xlabel('z theoretical (mm)')
                 plt.title("Erreur de rétroprojection (Zernike) : iteration N°"+str(it+1), size=17)
                 plt.xlabel('z théorique (mm)', size=17)
-                plt.ylabel('$\Delta$z (px)', size=17)
+                plt.ylabel(r'$\Delta$z (px)', size=17)
                 plt.savefig(save_retro+'Retroprojection_error_Zernike_iteration'+str(it+1)+'.pdf', dpi = 500)
                 plt.close()
                 
@@ -1314,7 +1314,7 @@ def Soloff_Zernike_calibration (z_list : np.ndarray,
                     # plt.xlabel('z theoretical (mm)')
                     plt.title("Erreur de rétroprojection (Soloff) pour l'iteration N°"+str(it+1))
                     plt.xlabel('z théorique (mm)')
-                    plt.ylabel('$\Delta$z (px)')
+                    plt.ylabel(r'$\Delta$z (px)')
                     plt.savefig(save_retro+'Retroprojection_error_Soloff_iteration'+str(it+1)+'.pdf', dpi = 500)
                     plt.close()
                     

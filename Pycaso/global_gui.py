@@ -349,7 +349,7 @@ class Chaine:
                 raise FileNotFoundError("hauteurs_calibration.txt absent ou incomplet : cocher « Ouvrir la "
                                         "fenêtre de réglages » pour saisir les plans z")
             z = lu["z_table"] or Calibration.liste_z(lu["z_init"], lu["z_final"], lu["pas"])
-            params = dict(path_images=self.calib, z_list=z, method="Lagrange", pform=4, iterations=10,
+            params = dict(path_images=self.calib, z_list=z, method="StereoComplex", pform=10, iterations=1,
                           move_metadata=False, show_plot=True, date=lu["date"])
         calib = Calibration.from_params(params)
         if params.get("move_metadata"):
