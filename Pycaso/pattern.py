@@ -24,7 +24,8 @@ def ChAruco_board (ncx : int,
     n = ncx * ncy / 2
     ChAruco_Board_img = []
     for e in range (int(n)) :
-        if cv2.__version__>='4.7.0' :
+        # test sur l'API et non sur la chaîne de version : '4.14.0' >= '4.7.0' est False
+        if hasattr(cv2.aruco, "generateImageMarker") :
             dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_1000)
             ChAruco_mrk = cv2.aruco.generateImageMarker(dictionary, e, pixel_factor*8)
         else :

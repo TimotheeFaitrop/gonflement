@@ -71,10 +71,14 @@ def _cle_nom(p):
     return (int(m.group()) if m else 10 ** 12, p.name)
 
 
-def images_camera(path_images, cote):
-    d = Path(path_images) / f"video_extenso_{cote}"
+def _images_dossier(d):
+    d = Path(d)
     return sorted((p for p in d.glob("*") if p.suffix.lower() in EXT_IMAGES), key=_cle_nom) \
         if d.is_dir() else []
+
+
+def images_camera(path_images, cote):
+    return _images_dossier(Path(path_images) / f"video_extenso_{cote}")
 
 
 def format_mire(images, n_test=6):
@@ -130,7 +134,8 @@ def _transformation_rigide(P, T):
     return R, Tc - R @ Pc
 
 
-def calibrer(path_images, z_list, dossier_sortie, nmax=10, legacy=None, figures=True):
+def calibrer(path_images, z_list, dossier_sortie, nmax=10, legacy=None, figures=True,
+             sous_dossiers=None, afficher=False):
     """Calibre la paire de caméras avec StereoComplex à partir des images de la mire.
 
     path_images   dossier contenant video_extenso_left et video_extenso_right
@@ -138,10 +143,13 @@ def calibrer(path_images, z_list, dossier_sortie, nmax=10, legacy=None, figures=
     dossier_sortie  dossier de résultats (ex. results_calib/SC_10)
     nmax          ordre maximal de Zernike du champ de rayons (10 par défaut)
     legacy        format de la mire ; None = détecté sur quelques images
+    sous_dossiers (gauche, droite) : noms des sous-dossiers des caméras ; None = video_extenso_left / _right
+    afficher      ouvre les figures à la fin (sinon elles sont seulement enregistrées)
     Renvoie le dictionnaire du bilan (écrit aussi dans bilan_calibration.json).
     """
     sc = importer_stereocomplex()
-    gauches, droites = images_camera(path_images, "left"), images_camera(path_images, "right")
+    sg, sd = sous_dossiers or ("video_extenso_left", "video_extenso_right")
+    gauches, droites = _images_dossier(Path(path_images) / sg), _images_dossier(Path(path_images) / sd)
     z_list = np.asarray(z_list, float)
     if not (len(gauches) == len(droites) == len(z_list)):
         raise ValueError(f"{len(gauches)} images à gauche, {len(droites)} à droite, {len(z_list)} "
@@ -230,11 +238,11 @@ def calibrer(path_images, z_list, dossier_sortie, nmax=10, legacy=None, figures=
         print("ATTENTION : la validation croisée dépasse 0,2 mm : hauteurs z_list fausses, mire mal "
               "détectée sur certains plans, ou plateau qui n'a pas atteint sa hauteur.", flush=True)
     if figures:
-        _figures(dossier_sortie, T - ecart, ecart, plan, z_list)
+        _figures(dossier_sortie, T - ecart, ecart, plan, z_list, afficher)
     return bilan
 
 
-def _figures(dossier, points, ecart, plan, z_list):
+def _figures(dossier, points, ecart, plan, z_list, afficher=False):
     """Nuage 3D des coins reconstruits et erreur par plan (noms repris par l'interface)."""
     import matplotlib
     import matplotlib.pyplot as plt
@@ -243,7 +251,6 @@ def _figures(dossier, points, ecart, plan, z_list):
     ax.set_xlabel("X"), ax.set_ylabel("Y"), ax.set_zlabel("Z")
     ax.set_title("StereoComplex - coins de la mire reconstruits")
     plt.savefig(dossier / "Coord3D_StereoComplex.png")
-    plt.close()
     fig, (a1, a2) = plt.subplots(1, 2, figsize=(10, 4))
     k = np.unique(plan)
     a1.plot([z_list[i] for i in k], [ecart[plan == i, 2].mean() for i in k], "o-")
@@ -254,7 +261,9 @@ def _figures(dossier, points, ecart, plan, z_list):
     a2.set_title("Distribution de l'erreur")
     fig.tight_layout()
     plt.savefig(dossier / "Retroprojection_erreur_StereoComplex.png")
-    plt.close(fig)
+    if afficher:
+        plt.show()
+    plt.close("all")
 
 
 # ---------------------------------------------------------------- reconstruction
@@ -284,11 +293,16 @@ class Modele3D:
         """Points 3D (3, n) pour les pixels L (gauche) et R (droite), tableaux (n, 2) en (colonne, ligne).
         ecart_max_mm : si donné, les points dont les deux rayons passent à plus de cette distance
         l'un de l'autre (mauvais appariement) sont remplacés par NaN."""
-        xyz, ecart = self.modele.triangulate(np.asarray(L, float).reshape(-1, 2),
-                                             np.asarray(R, float).reshape(-1, 2))
-        p = xyz @ self.M.T + self.t
+        L, R = np.asarray(L, float).reshape(-1, 2), np.asarray(R, float).reshape(-1, 2)
+        ok = np.isfinite(L).all(1) & np.isfinite(R).all(1)        # tache perdue (NaN) -> point NaN
+        p = np.full((len(L), 3), np.nan)
+        ecart = np.full(len(L), np.nan)
+        if ok.any():
+            xyz, e = self.modele.triangulate(L[ok], R[ok])
+            p[ok] = xyz @ self.M.T + self.t
+            ecart[ok] = e
         if ecart_max_mm is not None:
-            p[np.asarray(ecart) > ecart_max_mm] = np.nan
+            p[ecart > ecart_max_mm] = np.nan
         return p.T
 
     __call__ = triangulation

@@ -27,6 +27,7 @@ ETAPES = {
 
 # méthode : motif du sous-dossier d'étalonnage et fichiers de constantes (comme Detect3D.METHODES)
 METHODES = {
+    "StereoComplex": ("SC", ("model.json", "repere_mire.npz", "weights.npz")),
     "Lagrange": ("Lpform", ("L_constants.npy",)),
     "Soloff":   ("Spform", ("S_constants0.npy", "S_constants.npy")),
     "Zernike":  ("nZ",     ("A_Zernike.npy",)),
@@ -37,8 +38,9 @@ FICHIERS_3D = ("X3d.txt", "Y3d.txt", "Z3d.txt")
 
 
 def source_vers_methode(nom):
-    """'Lpform_4_corrige' -> ('Lagrange', 4, True) ; None si le nom n'est pas reconnu."""
-    m = re.fullmatch(r"(Lpform|Spform|nZ)_(\d+)(_corrige)?", nom)
+    """'Lpform_4_corrige' -> ('Lagrange', 4, True) ; 'SC_10' -> ('StereoComplex', 10, False) ;
+    None si le nom n'est pas reconnu."""
+    m = re.fullmatch(r"(SC|Lpform|Spform|nZ)_(\d+)(_corrige)?", nom)
     if not m:
         return None
     methode = next(k for k, (p, _) in METHODES.items() if p == m.group(1))

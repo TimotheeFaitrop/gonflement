@@ -1,4 +1,4 @@
-"""Calibration stéréo (Lagrange / Soloff / Zernike) basée sur Pycaso.
+"""Calibration stéréo : StereoComplex (modèle de rayons) ou Pycaso (Lagrange / Soloff / Zernike).
 
 Les hauteurs du plateau (z de départ, pas, z final) sont lues dans hauteurs_calibration.txt,
 écrit par le programme d'acquisition dans le dossier des images de calibration (voir
@@ -33,10 +33,20 @@ except ModuleNotFoundError as err:  # fichier lancé depuis l'intérieur de Pyca
     import pycaso as pcs
 
 
-class Calibration:
-    """Calibration stéréo avec trois méthodes interchangeables."""
+def _stereo_complex():
+    """Module interface_gonflement/stereo_complex.py (calibration StereoComplex)."""
+    try:
+        from interface_gonflement import stereo_complex
+    except ImportError:                 # lancé depuis un autre dossier que la racine du projet
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "interface_gonflement"))
+        import stereo_complex
+    return stereo_complex
 
-    METHODS = ("Lagrange", "Soloff", "Zernike")
+
+class Calibration:
+    """Calibration stéréo avec quatre méthodes interchangeables."""
+
+    METHODS = ("StereoComplex", "Lagrange", "Soloff", "Zernike")
 
     # Mire ChArUco (fixe)
     NCX = 12      # nombre de carrés en x
@@ -140,9 +150,11 @@ class Calibration:
         f = self.fichier_hauteurs(self.path_images)
         if f is None:
             return
+        detail = (f"ordre de Zernike nmax {pform}" if method == "StereoComplex"
+                  else f"degré {pform}, {iterations} itérations")
         with open(f, "a", encoding="utf-8") as fh:
-            fh.write(f"Calcul {time.strftime('%Y-%m-%d %H:%M')} : {method}, degré {pform}, "
-                     f"{iterations} itérations -> {self.results_dir}\n")
+            fh.write(f"Calcul {time.strftime('%Y-%m-%d %H:%M')} : {method}, {detail} "
+                     f"-> {self.results_dir}\n")
 
     def verifier(self, method=None, pform=None):
         """Problèmes bloquants avant la calibration : (erreurs, avertissements), listes de textes.
@@ -200,16 +212,28 @@ class Calibration:
     # ----- point d'entrée unique -----
 
     def run(self, method, pform, iterations):
-        """Lance la méthode choisie ('Lagrange', 'Soloff' ou 'Zernike')."""
+        """Lance la méthode choisie ('StereoComplex', 'Lagrange', 'Soloff' ou 'Zernike').
+        Pour StereoComplex, pform est l'ordre de Zernike nmax et iterations est ignoré."""
         erreurs, _ = self.verifier(method, pform)
         if erreurs:
             raise FileNotFoundError("Calibration impossible :\n  " + "\n  ".join(erreurs))
         print(f"\n{self.date}\n#####\n{method} - début de la calibration\n#####")
-        res = {"Lagrange": self.lagrange, "Soloff": self.soloff, "Zernike": self.zernike}[method](pform, iterations)
+        res = {"StereoComplex": self.stereocomplex, "Lagrange": self.lagrange, "Soloff": self.soloff,
+               "Zernike": self.zernike}[method](pform, iterations)
         self.noter_calcul(method, pform, iterations)
         return res
 
     # ----- méthodes de calibration -----
+
+    def stereocomplex(self, nmax, iterations=None):
+        """Calibration StereoComplex : modèle de rayons de la paire de caméras (résultats dans
+        results_calib/SC_<nmax>/ : model.json, weights.npz, repere_mire.npz, bilan_calibration.json).
+        iterations n'existe pas pour cette méthode. Retourne le bilan (dictionnaire)."""
+        scx = _stereo_complex()
+        out = self._prepare(f"SC_{nmax}")
+        return scx.calibrer(self.path_images, self.z_list, out, nmax=int(nmax),
+                            sous_dossiers=(self.left_subfolder, self.right_subfolder),
+                            afficher=self.show_plot)
 
     def lagrange(self, l_pform, iterations=10):
         """Retourne les constantes de Lagrange (et les sauve en .npy)."""

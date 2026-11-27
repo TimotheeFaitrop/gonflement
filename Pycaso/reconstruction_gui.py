@@ -372,7 +372,8 @@ class Detect3DGUI:
         degres = essai.degres_disponibles()
         self.cb_degre.configure(values=[str(n) for n in degres])
         defaut = Detect3D.METHODES[essai.methode][2]
-        self.lbl_degre.configure(text={"Lagrange": "Degré (Lpform)", "Soloff": "Forme (Spform)",
+        self.lbl_degre.configure(text={"StereoComplex": "Ordre (SC, nmax)",
+                                       "Lagrange": "Degré (Lpform)", "Soloff": "Forme (Spform)",
                                        "Zernike": "Ordre (nZ)"}[essai.methode])
         self.v["degre"].set(str(defaut if defaut in degres or not degres else degres[0]))
         self._maj()

@@ -24,11 +24,12 @@ except ImportError:  # exécution directe : python calibration_gui.py
 SOLOFF_FORMS = ["111", "221", "222", "332", "333", "443", "444", "554", "555"]
 # méthode : (valeurs proposées pour le degré, degré par défaut, itérations par défaut)
 METHOD_DEFAULTS = {
+    "StereoComplex": ([str(i) for i in range(2, 17)], "10", 1),
     "Lagrange": ([str(i) for i in range(1, 9)], "4", 10),
     "Soloff":   (SOLOFF_FORMS, "332", 8),
     "Zernike":  ([str(i) for i in range(2, 16)], "6", 9),
 }
-LABELS_PFORM = {"Lagrange": "Degré (Lpform)", "Soloff": "Forme (aab)", "Zernike": "Ordre (nZ)"}
+LABELS_PFORM = {"StereoComplex": "Ordre de Zernike (nmax)", "Lagrange": "Degré (Lpform)", "Soloff": "Forme (aab)", "Zernike": "Ordre (nZ)"}
 
 # dossier où l'explorateur « … » commence, et où l'on cherche la dernière calibration
 DOSSIER_PARCOURIR = "../../Expériences"
@@ -80,9 +81,9 @@ def ask_parameters(path_images=None):
 
     v = {
         "path_images": tk.StringVar(value=path_images or _calib_recente()),
-        "method": tk.StringVar(value="Lagrange"),
-        "pform": tk.StringVar(value="4"),
-        "iterations": tk.IntVar(value=10),
+        "method": tk.StringVar(value="StereoComplex"),
+        "pform": tk.StringVar(value="10"),
+        "iterations": tk.IntVar(value=1),
         "z_init": tk.StringVar(value="120"),
         "z_final": tk.StringVar(value="10"),
         "z_step": tk.StringVar(value="2"),
@@ -108,15 +109,16 @@ def ask_parameters(path_images=None):
     f.grid(row=1, column=0, sticky="ew", **pad)
     ttk.Label(f, text="Méthode").grid(row=0, column=0, sticky="w", **pad)
     cb_method = ttk.Combobox(f, textvariable=v["method"], state="readonly",
-                             values=list(METHOD_DEFAULTS), width=12)
+                             values=list(METHOD_DEFAULTS), width=14)
     cb_method.grid(row=0, column=1, sticky="w", **pad)
-    lbl_pform = ttk.Label(f, text=LABELS_PFORM["Lagrange"])
+    lbl_pform = ttk.Label(f, text=LABELS_PFORM["StereoComplex"])
     lbl_pform.grid(row=1, column=0, sticky="w", **pad)
-    cb_pform = ttk.Combobox(f, textvariable=v["pform"], width=12, values=METHOD_DEFAULTS["Lagrange"][0])
+    cb_pform = ttk.Combobox(f, textvariable=v["pform"], width=14, values=METHOD_DEFAULTS["StereoComplex"][0])
     cb_pform.grid(row=1, column=1, sticky="w", **pad)
     ttk.Label(f, text="Itérations").grid(row=2, column=0, sticky="w", **pad)
-    ttk.Spinbox(f, from_=1, to=12, textvariable=v["iterations"], width=6).grid(
-        row=2, column=1, sticky="w", **pad)
+    sp_iter = ttk.Spinbox(f, from_=1, to=12, textvariable=v["iterations"], width=6)
+    sp_iter.grid(row=2, column=1, sticky="w", **pad)
+    sp_iter.configure(state="disabled")          # StereoComplex n'a pas d'itérations (Pycaso seulement)
 
     def on_method_change(*_):
         m = v["method"].get()
@@ -125,6 +127,7 @@ def ask_parameters(path_images=None):
         v["pform"].set(default)
         v["iterations"].set(it)
         lbl_pform.configure(text=LABELS_PFORM[m])
+        sp_iter.configure(state="disabled" if m == "StereoComplex" else "normal")
     cb_method.bind("<<ComboboxSelected>>", on_method_change)
 
     # --- Plans z ---
