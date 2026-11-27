@@ -162,6 +162,7 @@ class Detect3DGUI:
     """Fenêtre de saisie des paramètres de Detect3D."""
 
     CASES = [
+        ("redresser_plan", "Remettre à l'horizontal le plan moyen de l'image 0 (rotation de tous les points)"),
         ("inverser_z", "Inverser l'axe Z (dôme vers le haut)"),
         ("enregistrer_figures", "Enregistrer les figures (.svg dans le dossier des résultats)"),
         ("afficher_figures", "Afficher les figures à la fin"),
@@ -489,6 +490,7 @@ class Detect3DGUI:
         essai = Detect3D(dossier_essai=self.v["dossier_essai"].get().strip(), dossier_calib=self.dossier_calib,
                          methode=self.v["methode"].get(), degre=degre, etat_plat=self.v["etat_plat"].get(),
                          affichage_z=self.v["affichage_z"].get(), inverser_z=self.v["inverser_z"].get(),
+                         redresser_plan=self.v["redresser_plan"].get(),
                          couleurs_fixes=self.v["couleurs_fixes"].get(), **echelle)
         return {"essai": essai, "images": images or None, "fps": fps, "dpi": dpi, "vue": vue}
 

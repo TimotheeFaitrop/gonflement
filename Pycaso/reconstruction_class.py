@@ -67,6 +67,8 @@ class Detect3D:
                  affichage_z="plan",        # axe vertical des figures (voir AFFICHAGES_Z) :
                                             # "position" (z brut, axe automatique), "plan" (z − plan médian
                                             # de l'image 0) ou "deplacement" (z − z de chaque tache à l'image 0)
+                 redresser_plan=True,       # rotation remettant à l'horizontal le plan moyen de l'image 0
+                                            # (toutes les images subissent la même rotation)
                  inverser_z=True,           # changer le signe de Z (dôme vers le haut)
                  exclusions_manuelles=True, # ne pas tracer les taches exclues à la main (retouche_gui)
                  couleurs_fixes=False,      # échelle de couleur fixe (sinon : min/max des données)
@@ -86,6 +88,7 @@ class Detect3D:
             raise ValueError(f"affichage_z : {', '.join(self.AFFICHAGES_Z)} (pas {affichage_z})")
         self.affichage_z = affichage_z
         self.inverser_z = inverser_z
+        self.redresser_plan = redresser_plan
         self.exclusions_manuelles = exclusions_manuelles
         self.etat_plat = etat_plat
         self.dossier_calib = dossier_calib
@@ -316,11 +319,19 @@ class Detect3D:
         celles à plus de 5 écarts robustes (médiane des écarts absolus) du plan : une tache aberrante
         ne le fait ni monter ni pencher. Image 0 = état plat (source corrigée), sinon 1re image flambée.
         """
-        x, y, z = self.X[0], self.Y[0], self.Z[0]
-        ok = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
-        if self.exclusions_manuelles:
-            from Pycaso.retouche_class import ExclusionsTaches
-            ok &= ~ExclusionsTaches(self.dossier_essai, self.dossier_sortie.name).masque_colonnes(len(x))
+        x, y, z = self.xyz_redresse(0)      # image 0 déjà redressée si redresser_plan
+        return self._ajuster_plan(x, y, z)
+
+    def _masque_exclus(self, n):
+        """Taches exclues à la main (True = exclue) ; aucune si exclusions_manuelles est faux."""
+        if not self.exclusions_manuelles:
+            return np.zeros(n, dtype=bool)
+        from Pycaso.retouche_class import ExclusionsTaches
+        return ExclusionsTaches(self.dossier_essai, self.dossier_sortie.name).masque_colonnes(n)
+
+    def _ajuster_plan(self, x, y, z):
+        """Plan médian robuste z = a + b x + c y d'un nuage (voir plan_reference)."""
+        ok = np.isfinite(x) & np.isfinite(y) & np.isfinite(z) & ~self._masque_exclus(len(x))
         if ok.sum() < 3:
             return np.array([np.nanmedian(z) if np.isfinite(z).any() else 0.0, 0.0, 0.0])
         A = np.column_stack((np.ones(ok.sum()), x[ok], y[ok]))
@@ -336,6 +347,39 @@ class Detect3D:
             garde = nouveau
         return coef
 
+    def rotation_plan(self):
+        """(R, centre) : rotation qui remet à l'horizontal le plan moyen de l'image 0.
+
+        Le plan médian (voir _ajuster_plan) est calculé sur les points bruts de l'image 0 ; la
+        rotation amène sa normale sur l'axe Z, autour du centre des taches valides de l'image 0
+        (le z moyen est donc conservé). Renvoie (None, None) si le plan est déjà horizontal.
+        """
+        x, y, z = self.X[0], self.Y[0], self.Z[0]
+        a, b, c = self._ajuster_plan(x, y, z)
+        if b == 0 and c == 0:
+            return None, None
+        ok = np.isfinite(x) & np.isfinite(y) & ~self._masque_exclus(len(x))
+        xm, ym = x[ok].mean(), y[ok].mean()
+        centre = np.array([xm, ym, a + b * xm + c * ym])
+        n = np.array([-b, -c, 1.0])
+        n /= np.linalg.norm(n)
+        v = np.array([n[1], -n[0], 0.0])                  # n × (0, 0, 1)
+        K = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+        R = np.eye(3) + K + K @ K / (1 + n[2])            # formule de Rodrigues (n[2] > 0)
+        return R, centre
+
+    def xyz_redresse(self, ligne):
+        """x, y, z d'une image ; avec redresser_plan, après rotation qui rend horizontal le plan
+        moyen de l'image 0 (la même rotation pour toutes les images, déformations conservées)."""
+        x, y, z = self.X[ligne], self.Y[ligne], self.Z[ligne]
+        if not self.redresser_plan:
+            return x, y, z
+        R, centre = self.rotation_plan()
+        if R is None:
+            return x, y, z
+        P = (np.column_stack((x, y, z)) - centre) @ R.T + centre
+        return P[:, 0], P[:, 1], P[:, 2]
+
     def points_image(self, ligne, plan=None):
         """Points affichables d'une image (ligne de X, Y, Z) : x, y, z sans les taches invalides ni
         exclues à la main, avec Z corrigé selon affichage_z et inverser_z.
@@ -343,18 +387,15 @@ class Detect3D:
         plan : coefficients du plan médian (voir plan_reference) ; None = calculé ici si besoin
         (le passer évite de le recalculer pour chaque image).
         """
-        x, y, z = self.X[ligne], self.Y[ligne], self.Z[ligne]
+        x, y, z = self.xyz_redresse(ligne)
         if self.affichage_z == "plan":     # même plan retiré à toutes les images (nouveau tableau)
             a, b, c = plan if plan is not None else self.plan_reference()
             z = z - (a + b * x + c * y)
         elif self.affichage_z == "deplacement":
-            z = z - self.Z[0]              # chaque tache : z − son z à l'image 0
+            z = z - self.xyz_redresse(0)[2]   # chaque tache : z − son z à l'image 0
         if self.inverser_z:
             z = -z
-        ok = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
-        if self.exclusions_manuelles:                             # taches exclues à la main (retouche_gui)
-            from Pycaso.retouche_class import ExclusionsTaches
-            ok &= ~ExclusionsTaches(self.dossier_essai, self.dossier_sortie.name).masque_colonnes(len(x))
+        ok = np.isfinite(x) & np.isfinite(y) & np.isfinite(z) & ~self._masque_exclus(len(x))
         return x[ok], y[ok], z[ok]
 
     # ----- GIF du gonflement -----
