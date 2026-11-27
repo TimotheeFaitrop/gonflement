@@ -1,23 +1,23 @@
 # Environnement unique : machine de gonflement (crappy + Pycaso) + StereoComplex
-# Testé : Python 3.13, numpy 2.4.6, opencv-contrib-python 4.14.0, crappy 2.2.0, stereocomplex 0.7.0a1
-#
-# Installation (dans un venv neuf) :
-#   pip uninstall -y opencv-python opencv-python-headless opencv-contrib-python opencv-contrib-python-headless
-#   pip install -r requirements.txt
-#   git clone --branch develop https://github.com/jeffwitz/StereoComplex.git
-#   pip install --no-deps -e StereoComplex      # --no-deps : sinon pip réinstalle la version headless
+# Testé : Python 3.13, numpy 2.4.6, opencv-contrib-python 4.14.0, crappy 2.2.0,
+#         pymodbus 3.9.0, stereocomplex 0.7.0a1 (branche develop)
 #
 # Un seul paquet OpenCV doit être installé : ils écrivent tous dans le même dossier cv2/.
 # On prend la version contrib NON headless : contrib pour cv2.aruco, GUI pour cv2.imshow.
+# StereoComplex s'installe ensuite avec --no-deps (sinon pip ajoute la version headless).
 
 numpy>=2.0,<2.5                     # crappy >= 2.2 exige numpy >= 2 ; Pycaso plante à partir de 2.5
-opencv-contrib-python>=4.10,<5      # >= 4.10 exigé par StereoComplex ; < 5 : API aruco non testée en 5.x
+opencv-contrib-python>=4.10,<5      # >= 4.10 exigé par StereoComplex
 scipy>=1.10
 pillow>=10.0
 crappy>=2.2
-scikit-image
-pandas
-matplotlib
-trackpy
+pymodbus==3.9.0                     # alicat_flow_crappy teste la version en dur (3.0.2 / 3.8.6 / 3.9.0)
 pyserial
 pyftdi
+scikit-image
+scikit-learn
+pandas
+matplotlib
+imageio
+tifffile
+trackpy
